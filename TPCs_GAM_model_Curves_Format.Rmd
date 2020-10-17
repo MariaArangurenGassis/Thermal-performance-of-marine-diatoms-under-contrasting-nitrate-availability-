@@ -1,0 +1,1513 @@
+---
+title: "GAM_model_Curves_Format"
+author: "Maria Aranguren-Gassis"
+date: "19/12/2016"
+output: html_document
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# Load libraries:
+library(ggplot2) #To plot
+library(bbmle)
+library(mgcv) #to calculate GAM
+library(MuMIn) #to calculate AIC
+library(stringr)
+library(gridExtra) #to draw the table
+library(grid) #to draw the table
+library(plotly) #for 3D scatter plots
+require(ggplot2) #To plot
+#require(xlsx) #To work with excell files
+require(dplyr) #To work with data tables
+require(tidyr) #To work with data tables
+require(magrittr)
+require(dplyr)
+require(readxl)
+
+```
+
+
+#CHAETOCEROS SIMPLEX
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+dat_Chsim<-read_xlsx("./Chsim_Thomas_SEobserved.xlsx",sheet=2,col_types = c("text","numeric","numeric","numeric","numeric"),col_names = c("ID","Growth.rate","Growth.rate.SE","R^2","adj.R^2"))
+dat_Chsim = dat_Chsim[-1,]
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Chsim$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Chsim.curve<-bind_cols(Extra_columns_ID,dat_Chsim)
+
+Chsim.curve$temperature<-as.character(Chsim.curve$temperature)
+
+Chsim.curve$temperature<-as.numeric(Chsim.curve$temperature)
+
+```
+
+###GAM model fit
+##smoother temperatura by nitrate concentration, plus a parametric component nitrate concentration
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# GAM model fit:
+#	This includes a smoothed relationship between 
+#	growth rate and temperature, allows this shape to differ among nitrate treatments, 
+#	and also estimates a separate intercept between treatments.
+gm_Chsim<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=3)+Nitrate.concentration,data=Chsim.curve)
+
+
+summary(gm_Chsim)
+anova(gm_Chsim)
+
+```
+Temperature is significant for both nitrate treatments
+
+
+
+#exploring how different the temperature effect on growth rate is in L1 than in 5uM
+
+new smoother that shows the difference between the variability of growth rate with temperature of L1 respect to 5uM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+gm4_Chsim<-gam(Growth.rate~s(temperature,by = as.numeric(Nitrate.concentration == "L1"),k=4)+Nitrate.concentration+s(temperature, k=4),data=Chsim.curve)
+#we have included a new smoother that shows the difference between the variability of growth rate with temperature of N-replete respect to N-limited
+summary(gm4_Chsim)
+plot(gm4_Chsim)
+
+```
+The effect of temperature on the difference between L1 and 5uM is very significant, and tend to increase in the temperature optimum area (20-25ºC)
+
+
+#making the plot with both curves together error bars IC 95%
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# extract results of model fit for plotting:
+ndat.Chsim<-expand.grid(temperature=seq(10,34),Nitrate.concentration=c('L1','5'))
+#ndat.Chsim<-ndat.Chsim[!(ndat.Chsim$Nitrate.concentration=='L1' & ndat.Chsim$temperature>32),]
+pd.Chsim<-predict(gm_Chsim,newdata=ndat.Chsim,type='response',se=T)
+ndat.Chsim$Growth.rate<-pd.Chsim$fit
+ndat.Chsim$se.fit<-pd.Chsim$se.fit
+ndat.Chsim$CI<-pd.Chsim$se.fit*1.96
+
+# generate plot:
+plot_Chsim<-ggplot(ndat.Chsim,aes(x=temperature,y=Growth.rate,Nitrate.concentration))+
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  	geom_point(data=Chsim.curve,aes(colour=Nitrate.concentration, shape=Nitrate.concentration))+
+	geom_line(aes(colour=Nitrate.concentration, linetype=Nitrate.concentration),size=1)+
+	geom_line(aes(y=Growth.rate-CI,colour=Nitrate.concentration),linetype=3)+
+	geom_line(aes(y=Growth.rate+CI,colour=Nitrate.concentration),linetype=3)+
+	#scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous(expression("Growth rate (d"^"-1"*")"))+ 
+  ggtitle("Chaetoceros simplex")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)
+
+plot_Chsim
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#I'm going to expand the prediction first to be sure that we catch the niche limits
+ndat.Chsim2<-expand.grid(temperature=seq(0,50),Nitrate.concentration=c('L1','5'))
+pd.Chsim2<-predict(gm_Chsim,newdata=ndat.Chsim2,type='response',se=T)
+ndat.Chsim2$Growth.rate<-pd.Chsim2$fit
+ndat.Chsim2$se.fit<-pd.Chsim2$se.fit
+ndat.Chsim2$CI<-pd.Chsim2$se.fit*1.96
+```
+ 
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+ndat.Chsim3L1<-filter(ndat.Chsim2,ndat.Chsim2$Nitrate.concentration=="L1")
+Max.Growth.Rate.ChsimL1<-max(ndat.Chsim3L1$Growth.rate)
+#Max.Growth.Rate.ChsimL1
+
+#5
+ndat.Chsim35<-filter(ndat.Chsim2,ndat.Chsim2$Nitrate.concentration=="5")
+Max.Growth.Rate.Chsim5<-max(ndat.Chsim35$Growth.rate)
+#Max.Growth.Rate.Chsim5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.max.GR.ChsimL1<-which(ndat.Chsim3L1$Growth.rate==Max.Growth.Rate.ChsimL1)
+Optimum.Temperature.ChsimL1<-ndat.Chsim3L1$temperature[position.max.GR.ChsimL1]
+#Optimum.Temperature.ChsimL1
+
+#5
+position.max.GR.Chsim5<-which(ndat.Chsim35$Growth.rate==Max.Growth.Rate.Chsim5)
+Optimum.Temperature.Chsim5<-ndat.Chsim35$temperature[position.max.GR.Chsim5]
+#Optimum.Temperature.Chsim5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.higher.temp.GR0.Chsim.L1<-which((ndat.Chsim3L1$temperature>Optimum.Temperature.ChsimL1)&(ndat.Chsim3L1$Growth.rate<0))
+position.Maximum.Temperature.Chsim.L1<-position.higher.temp.GR0.Chsim.L1[1]
+Maximum.Temperature.Chsim.L1<-ndat.Chsim3L1$temperature[position.Maximum.Temperature.Chsim.L1]
+#Maximum.Temperature.Chsim.L1
+
+#5
+position.higher.temp.GR0.Chsim.5<-which((ndat.Chsim35$temperature>Optimum.Temperature.Chsim5)&(ndat.Chsim35$Growth.rate<0))
+position.Maximum.Temperature.Chsim.5<-position.higher.temp.GR0.Chsim.5[1]
+Maximum.Temperature.Chsim.5<-ndat.Chsim35$temperature[position.Maximum.Temperature.Chsim.5]
+#Maximum.Temperature.Chsim.5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.lower.temp.GR0.Chsim.L1<-which((ndat.Chsim3L1$temperature<Optimum.Temperature.ChsimL1)&(ndat.Chsim3L1$Growth.rate<0))
+position.minimum.Temperature.Chsim.L1<-position.lower.temp.GR0.Chsim.L1[length(position.lower.temp.GR0.Chsim.L1)]
+minimum.Temperature.Chsim.L1<-ndat.Chsim3L1$temperature[position.minimum.Temperature.Chsim.L1]
+#minimum.Temperature.Chsim.L1
+
+#5
+position.lower.temp.GR0.Chsim.5<-which((ndat.Chsim35$temperature<Optimum.Temperature.Chsim5)&(ndat.Chsim35$Growth.rate<0))
+position.minimum.Temperature.Chsim.5<-position.lower.temp.GR0.Chsim.5[length(position.lower.temp.GR0.Chsim.5)]
+minimum.Temperature.Chsim.5<-ndat.Chsim35$temperature[position.minimum.Temperature.Chsim.5]
+#minimum.Temperature.Chsim.5
+
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+niche.width.Chsim.L1<-Maximum.Temperature.Chsim.L1-minimum.Temperature.Chsim.L1
+#niche.width.Chsim.L1
+
+#5
+niche.width.Chsim.5<-Maximum.Temperature.Chsim.5-minimum.Temperature.Chsim.5
+#niche.width.Chsim.5
+
+```
+
+#**************************************************************************************
+
+
+#ASTROSYNE RADIATA
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#reading data
+#  dat_Arad<-read.xlsx2("./Arad_Thomas_SEobserved.xlsx",2,colClasses = c("character","numeric","numeric","numeric","numeric"))
+
+dat_Arad<-read_xlsx("./Arad_Thomas_SEobserved.xlsx",sheet=2,col_types = c("text","numeric","numeric","numeric","numeric"),col_names = c("ID","Growth.rate","Growth.rate.SE","R^2","adj.R^2"))
+dat_Arad = dat_Arad[-1,]
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Arad$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Arad.curve<-bind_cols(Extra_columns_ID,dat_Arad)
+
+Arad.curve$temperature<-as.character(Arad.curve$temperature)
+
+Arad.curve$temperature<-as.numeric(Arad.curve$temperature)
+
+```
+
+###GAM model fit
+##smoother temperatura by nitrate concentration, plus a parametric component nitrate concentration
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# GAM model fit:
+#	This includes a smoothed relationship between 
+#	growth rate and temperature, allows this shape to differ among nitrate treatments, 
+#	and also estimates a separate intercept between treatments.
+gm_Arad<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=6)+Nitrate.concentration,data=Arad.curve)
+
+summary(gm_Arad)
+anova(gm_Arad)
+
+```
+Temperature is significant for both nitrate treatments
+
+
+
+
+#exploring how different the temperature effect on growth rate is in L1 than in 5uM
+
+new smoother that shows the difference between the variability of growth rate with temperature of L1 respect to 5uM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+gm4_Arad<-gam(Growth.rate~s(temperature,by = as.numeric(Nitrate.concentration == "L1"),k=6)+Nitrate.concentration+s(temperature, k=7),data=Arad.curve)
+#we have included a new smoother that shows the difference between the variability of growth rate with temperature of N-replete respect to N-limited
+summary(gm4_Arad)
+plot(gm4_Arad)
+
+```
+The effect of temperature on the difference between L1 and 5uM is very significant, and tend to increase in the temperature optimum area (31ºC)
+
+
+#making the plot with both curves together error bars IC 95%
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# extract results of model fit for plotting:
+ndat.Arad<-expand.grid(temperature=seq(10,34),Nitrate.concentration=c('L1','5'))
+#ndat.Arad<-ndat.Arad[!(ndat.Arad$Nitrate.concentration=='L1' & ndat.Arad$temperature>32),]
+pd.Arad<-predict(gm_Arad,newdata=ndat.Arad,type='response',se=T)
+ndat.Arad$Growth.rate<-pd.Arad$fit
+ndat.Arad$se.fit<-pd.Arad$se.fit
+ndat.Arad$CI<-pd.Arad$se.fit*1.96
+
+# generate plot:
+plot_Arad<-ggplot(ndat.Arad,aes(x=temperature,y=Growth.rate,Nitrate.concentration))+
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  	geom_point(data=Arad.curve,aes(colour=Nitrate.concentration, shape=Nitrate.concentration))+
+	geom_line(aes(colour=Nitrate.concentration, linetype=Nitrate.concentration),size=1)+
+	geom_line(aes(y=Growth.rate-CI,colour=Nitrate.concentration),linetype=3)+
+	geom_line(aes(y=Growth.rate+CI,colour=Nitrate.concentration),linetype=3)+
+	scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous(expression("Growth rate (d"^"-1"*")"))+
+  ggtitle("Astrosyne radiata")+
+	theme_bw()+
+  theme(legend.position="none",plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)
+
+plot_Arad
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#I' going to expand the prediction first to be sure that we catch the niche limits
+ndat.Arad2<-expand.grid(temperature=seq(0,40),Nitrate.concentration=c('L1','5'))
+pd.Arad2<-predict(gm_Arad,newdata=ndat.Arad2,type='response',se=T)
+ndat.Arad2$Growth.rate<-pd.Arad2$fit
+ndat.Arad2$se.fit<-pd.Arad2$se.fit
+ndat.Arad2$CI<-pd.Arad2$se.fit*1.96
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+ndat.Arad3L1<-filter(ndat.Arad2,ndat.Arad2$Nitrate.concentration=="L1")
+Max.Growth.Rate.AradL1<-max(ndat.Arad3L1$Growth.rate)
+#Max.Growth.Rate.AradL1
+
+#5
+ndat.Arad35<-filter(ndat.Arad2,ndat.Arad2$Nitrate.concentration=="5")
+Max.Growth.Rate.Arad5<-max(ndat.Arad35$Growth.rate)
+#Max.Growth.Rate.Arad5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.max.GR.AradL1<-which(ndat.Arad3L1$Growth.rate==Max.Growth.Rate.AradL1)
+Optimum.Temperature.AradL1<-ndat.Arad3L1$temperature[position.max.GR.AradL1]
+#Optimum.Temperature.AradL1
+
+#5
+position.max.GR.Arad5<-which(ndat.Arad35$Growth.rate==Max.Growth.Rate.Arad5)
+Optimum.Temperature.Arad5<-ndat.Arad35$temperature[position.max.GR.Arad5]
+#Optimum.Temperature.Arad5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.higher.temp.GR0.Arad.L1<-which((ndat.Arad3L1$temperature>Optimum.Temperature.AradL1)&(ndat.Arad3L1$Growth.rate<0))
+position.Maximum.Temperature.Arad.L1<-position.higher.temp.GR0.Arad.L1[1]
+Maximum.Temperature.Arad.L1<-ndat.Arad3L1$temperature[position.Maximum.Temperature.Arad.L1]
+#Maximum.Temperature.Arad.L1
+
+#5
+position.higher.temp.GR0.Arad.5<-which((ndat.Arad35$temperature>Optimum.Temperature.Arad5)&(ndat.Arad35$Growth.rate<0))
+position.Maximum.Temperature.Arad.5<-position.higher.temp.GR0.Arad.5[1]
+Maximum.Temperature.Arad.5<-ndat.Arad35$temperature[position.Maximum.Temperature.Arad.5]
+#Maximum.Temperature.Arad.5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.lower.temp.GR0.Arad.L1<-which((ndat.Arad3L1$temperature<Optimum.Temperature.AradL1)&(ndat.Arad3L1$Growth.rate<0.1))
+position.minimum.Temperature.Arad.L1<-position.lower.temp.GR0.Arad.L1[length(position.lower.temp.GR0.Arad.L1)]
+minimum.Temperature.Arad.L1<-ndat.Arad3L1$temperature[position.minimum.Temperature.Arad.L1]
+#minimum.Temperature.Arad.L1
+
+#5
+position.lower.temp.GR0.Arad.5<-which((ndat.Arad35$temperature<Optimum.Temperature.Arad5)&(ndat.Arad35$Growth.rate<0.1))
+position.minimum.Temperature.Arad.5<-position.lower.temp.GR0.Arad.5[length(position.lower.temp.GR0.Arad.5)]
+minimum.Temperature.Arad.5<-ndat.Arad35$temperature[position.minimum.Temperature.Arad.5]
+#minimum.Temperature.Arad.5
+
+#ATTENTION! for L1 it makes an asymptote in the left tail, so I put the limit in GR< 0.1 instead of 0 for tis algae
+```
+#ATTENTION! for L1 it makes an asymptote in the left tail, so I put the limit in GR< 0.1 instead of 0 for tis algae
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+niche.width.Arad.L1<-Maximum.Temperature.Arad.L1-minimum.Temperature.Arad.L1
+#niche.width.Arad.L1
+
+#5
+niche.width.Arad.5<-Maximum.Temperature.Arad.5-minimum.Temperature.Arad.5
+#niche.width.Arad.5
+
+```
+
+
+#**************************************************************************************
+
+
+#COSCINODISCUS CONCINNUS
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#reading data
+#    dat_Ccon<-read.xlsx2("./Ccon_Thomas_SEobserved.xlsx",2,colClasses = c("character","numeric","numeric","numeric","numeric"))
+
+dat_Ccon<-read_xlsx("./Ccon_Thomas_SEobserved.xlsx",sheet=2,col_types = c("text","numeric","numeric","numeric","numeric"),col_names = c("ID","Growth.rate","Growth.rate.SE","R^2","adj.R^2"))
+dat_Ccon = dat_Ccon[-1,]
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Ccon$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Ccon.curve<-bind_cols(Extra_columns_ID,dat_Ccon)
+
+Ccon.curve$temperature<-as.character(Ccon.curve$temperature)
+
+Ccon.curve$temperature<-as.numeric(Ccon.curve$temperature)
+
+```
+
+###GAM model fit
+##smoother temperatura by nitrate concentration, plus a parametric component nitrate concentration
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# GAM model fit:
+#	This includes a smoothed relationship between 
+#	growth rate and temperature, allows this shape to differ among nitrate treatments, 
+#	and also estimates a separate intercept between treatments.
+gm_Ccon<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=3)+Nitrate.concentration,data=Ccon.curve)
+
+summary(gm_Ccon)
+anova(gm_Ccon)
+
+```
+Temperature is significant only for L1
+
+
+
+#exploring how different the temperature effect on growth rate is in L1 than in 5uM
+
+new smoother that shows the difference between the variability of growth rate with temperature of L1 respect to 5uM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+gm4_Ccon<-gam(Growth.rate~s(temperature,by = as.numeric(Nitrate.concentration == "L1"),k=3)+Nitrate.concentration+s(temperature, k=3),data=Ccon.curve)
+#we have included a new smoother that shows the difference between the variability of growth rate with temperature of N-replete respect to N-limited
+summary(gm4_Ccon)
+plot(gm4_Ccon)
+
+```
+The effect of temperature on the difference between L1 and 5uM is not significant significant, even is higher in the temperature optimum area (31ºC)
+
+
+
+
+#making the plot with both curves together error bars IC 95%
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# extract results of model fit for plotting:
+ndat.Ccon<-expand.grid(temperature=seq(10,34),Nitrate.concentration=c('L1','5'))
+#ndat.Ccon<-ndat.Ccon[!(ndat.Ccon$Nitrate.concentration=='L1' & ndat.Ccon$temperature>32),]
+pd.Ccon<-predict(gm_Ccon,newdata=ndat.Ccon,type='response',se=T)
+ndat.Ccon$Growth.rate<-pd.Ccon$fit
+ndat.Ccon$se.fit<-pd.Ccon$se.fit
+ndat.Ccon$CI<-pd.Ccon$se.fit*1.96
+
+# generate plot:
+plot_Ccon<-ggplot(ndat.Ccon,aes(x=temperature,y=Growth.rate,Nitrate.concentration))+
+	
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  	geom_point(data=Ccon.curve,aes(colour=Nitrate.concentration, shape=Nitrate.concentration))+
+	geom_line(aes(colour=Nitrate.concentration, linetype=Nitrate.concentration),size=1)+
+	geom_line(aes(y=Growth.rate-CI,colour=Nitrate.concentration),linetype=3)+
+	geom_line(aes(y=Growth.rate+CI,colour=Nitrate.concentration),linetype=3)+
+	scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous(expression("Growth rate (d"^"-1"*")"))+
+  ggtitle("Coscinodiscus concinnus")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)
+
+plot_Ccon
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#I' going to expand the prediction first to be sure that we catch the niche limits
+ndat.Ccon2<-expand.grid(temperature=seq(-20,40),Nitrate.concentration=c('L1','5'))
+pd.Ccon2<-predict(gm_Ccon,newdata=ndat.Ccon2,type='response',se=T)
+ndat.Ccon2$Growth.rate<-pd.Ccon2$fit
+ndat.Ccon2$se.fit<-pd.Ccon2$se.fit
+ndat.Ccon2$CI<-pd.Ccon2$se.fit*1.96
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+ndat.Ccon3L1<-filter(ndat.Ccon2,ndat.Ccon2$Nitrate.concentration=="L1")
+Max.Growth.Rate.CconL1<-max(ndat.Ccon3L1$Growth.rate)
+#Max.Growth.Rate.CconL1
+
+#5
+ndat.Ccon35<-filter(ndat.Ccon2,ndat.Ccon2$Nitrate.concentration=="5")
+Max.Growth.Rate.Ccon5<-max(ndat.Ccon35$Growth.rate)
+#Max.Growth.Rate.Ccon5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.max.GR.CconL1<-which(ndat.Ccon3L1$Growth.rate==Max.Growth.Rate.CconL1)
+Optimum.Temperature.CconL1<-ndat.Ccon3L1$temperature[position.max.GR.CconL1]
+#Optimum.Temperature.CconL1
+
+#5
+position.max.GR.Ccon5<-which(ndat.Ccon35$Growth.rate==Max.Growth.Rate.Ccon5)
+Optimum.Temperature.Ccon5<-ndat.Ccon35$temperature[position.max.GR.Ccon5]
+#Optimum.Temperature.Ccon5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.higher.temp.GR0.Ccon.L1<-which((ndat.Ccon3L1$temperature>Optimum.Temperature.CconL1)&(ndat.Ccon3L1$Growth.rate<0))
+position.Maximum.Temperature.Ccon.L1<-position.higher.temp.GR0.Ccon.L1[1]
+Maximum.Temperature.Ccon.L1<-ndat.Ccon3L1$temperature[position.Maximum.Temperature.Ccon.L1]
+#Maximum.Temperature.Ccon.L1
+
+#5
+position.higher.temp.GR0.Ccon.5<-which((ndat.Ccon35$temperature>Optimum.Temperature.Ccon5)&(ndat.Ccon35$Growth.rate<0))
+position.Maximum.Temperature.Ccon.5<-position.higher.temp.GR0.Ccon.5[1]
+Maximum.Temperature.Ccon.5<-ndat.Ccon35$temperature[position.Maximum.Temperature.Ccon.5]
+#Maximum.Temperature.Ccon.5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.lower.temp.GR0.Ccon.L1<-which((ndat.Ccon3L1$temperature<Optimum.Temperature.CconL1)&(ndat.Ccon3L1$Growth.rate<0))
+position.minimum.Temperature.Ccon.L1<-position.lower.temp.GR0.Ccon.L1[length(position.lower.temp.GR0.Ccon.L1)]
+minimum.Temperature.Ccon.L1<-ndat.Ccon3L1$temperature[position.minimum.Temperature.Ccon.L1]
+#minimum.Temperature.Ccon.L1
+
+#5
+position.lower.temp.GR0.Ccon.5<-which((ndat.Ccon35$temperature<Optimum.Temperature.Ccon5)&(ndat.Ccon35$Growth.rate<0))
+position.minimum.Temperature.Ccon.5<-position.lower.temp.GR0.Ccon.5[length(position.lower.temp.GR0.Ccon.5)]
+minimum.Temperature.Ccon.5<-ndat.Ccon35$temperature[position.minimum.Temperature.Ccon.5]
+#minimum.Temperature.Ccon.5
+
+
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+niche.width.Ccon.L1<-Maximum.Temperature.Ccon.L1-minimum.Temperature.Ccon.L1
+#niche.width.Ccon.L1
+
+#5
+niche.width.Ccon.5<-Maximum.Temperature.Ccon.5-minimum.Temperature.Ccon.5
+#niche.width.Ccon.5
+
+```
+
+
+#**************************************************************************************
+
+
+#HEMIAULUS SINENSIS
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#reading data
+#    dat_Hsin<-read.xlsx2("./Hsin_Thomas_SEobserved.xlsx",2,colClasses = c("character","numeric","numeric","numeric","numeric"))
+
+dat_Hsin<-read_xlsx("./Hsin_Thomas_SEobserved.xlsx",sheet=2,col_types = c("text","numeric","numeric","numeric","numeric"),col_names = c("ID","Growth.rate","Growth.rate.SE","R^2","adj.R^2"))
+dat_Hsin = dat_Hsin[-1,]
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Hsin$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Hsin.curve<-bind_cols(Extra_columns_ID,dat_Hsin)
+
+Hsin.curve$temperature<-as.character(Hsin.curve$temperature)
+
+Hsin.curve$temperature<-as.numeric(Hsin.curve$temperature)
+
+```
+
+###GAM model fit
+##smoother temperatura by nitrate concentration, plus a parametric component nitrate concentration
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# GAM model fit:
+#	This includes a smoothed relationship between 
+#	growth rate and temperature, allows this shape to differ among nitrate treatments, 
+#	and also estimates a separate intercept between treatments.
+gm_Hsin<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=3)+Nitrate.concentration,data=Hsin.curve)
+
+summary(gm_Hsin)
+anova(gm_Hsin)
+
+```
+Temperature is significant for both nitrate concentrations
+
+
+
+
+#exploring how different the temperature effect on growth rate is in L1 than in 5uM
+
+new smoother that shows the difference between the variability of growth rate with temperature of L1 respect to 5uM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+gm4_Hsin<-gam(Growth.rate~s(temperature,by = as.numeric(Nitrate.concentration == "L1"),k=3)+Nitrate.concentration+s(temperature, k=3),data=Hsin.curve)
+#we have included a new smoother that shows the difference between the variability of growth rate with temperature of N-replete respect to N-limited
+summary(gm4_Hsin)
+plot(gm4_Hsin)
+
+```
+The effect of temperature on the difference between L1 and 5uM is very significant, and it increases with temperature
+
+
+
+#making the plot with both curves together  error bars IC 95%
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# extract results of model fit for plotting:
+ndat.Hsin<-expand.grid(temperature=seq(10,35),Nitrate.concentration=c('L1','5'))
+#ndat.Hsin<-ndat.Hsin[!(ndat.Hsin$Nitrate.concentration=='L1' & ndat.Hsin$temperature>32),]
+pd.Hsin<-predict(gm_Hsin,newdata=ndat.Hsin,type='response',se=T)
+ndat.Hsin$Growth.rate<-pd.Hsin$fit
+ndat.Hsin$se.fit<-pd.Hsin$se.fit
+ndat.Hsin$CI<-pd.Hsin$se.fit*1.96
+
+# generate plot:
+plot_Hsin<-ggplot(ndat.Hsin,aes(x=temperature,y=Growth.rate,Nitrate.concentration))+
+	
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  	geom_point(data=Hsin.curve,aes(colour=Nitrate.concentration, shape=Nitrate.concentration))+
+	geom_line(aes(colour=Nitrate.concentration, linetype=Nitrate.concentration),size=1)+
+	geom_line(aes(y=Growth.rate-CI,colour=Nitrate.concentration),linetype=3)+
+	geom_line(aes(y=Growth.rate+CI,colour=Nitrate.concentration),linetype=3)+
+	#scale_x_continuous('Temperature ºC')+
+	#scale_y_continuous(expression("Growth rate (d"^"-1"*")"))+
+  ggtitle("Hemiaulus sinensis")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)
+
+plot_Hsin
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#I' going to expand the prediction first to be sure that we catch the niche limits
+ndat.Hsin2<-expand.grid(temperature=seq(0,200),Nitrate.concentration=c('L1','5'))
+pd.Hsin2<-predict(gm_Hsin,newdata=ndat.Hsin2,type='response',se=T)
+ndat.Hsin2$Growth.rate<-pd.Hsin2$fit
+ndat.Hsin2$se.fit<-pd.Hsin2$se.fit
+ndat.Hsin2$CI<-pd.Hsin2$se.fit*1.96
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+ndat.Hsin3L1<-filter(ndat.Hsin2,ndat.Hsin2$Nitrate.concentration=="L1")
+Max.Growth.Rate.HsinL1<-max(ndat.Hsin3L1$Growth.rate)
+#Max.Growth.Rate.HsinL1
+
+#5
+ndat.Hsin35<-filter(ndat.Hsin2,ndat.Hsin2$Nitrate.concentration=="5")
+Max.Growth.Rate.Hsin5<-max(ndat.Hsin35$Growth.rate)
+#Max.Growth.Rate.Hsin5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.max.GR.HsinL1<-which(ndat.Hsin3L1$Growth.rate==Max.Growth.Rate.HsinL1)
+Optimum.Temperature.HsinL1<-ndat.Hsin3L1$temperature[position.max.GR.HsinL1]
+#Optimum.Temperature.HsinL1
+
+#5
+position.max.GR.Hsin5<-which(ndat.Hsin35$Growth.rate==Max.Growth.Rate.Hsin5)
+Optimum.Temperature.Hsin5<-ndat.Hsin35$temperature[position.max.GR.Hsin5]
+#Optimum.Temperature.Hsin5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.higher.temp.GR0.Hsin.L1<-which((ndat.Hsin3L1$temperature>Optimum.Temperature.HsinL1)&(ndat.Hsin3L1$Growth.rate<0.1))
+position.Maximum.Temperature.Hsin.L1<-position.higher.temp.GR0.Hsin.L1[1]
+Maximum.Temperature.Hsin.L1<-ndat.Hsin3L1$temperature[position.Maximum.Temperature.Hsin.L1]
+#Maximum.Temperature.Hsin.L1
+
+#5
+position.higher.temp.GR0.Hsin.5<-which((ndat.Hsin35$temperature>Optimum.Temperature.Hsin5)&(ndat.Hsin35$Growth.rate<0.1))
+position.Maximum.Temperature.Hsin.5<-position.higher.temp.GR0.Hsin.5[1]
+Maximum.Temperature.Hsin.5<-ndat.Hsin35$temperature[position.Maximum.Temperature.Hsin.5]
+#Maximum.Temperature.Hsin.5
+
+#ATTENTION! for both nutrient it makes an asymptote in the right tail, so I put the limit in GR< 0.1 instead of 0 for tis algae
+
+```
+#ATTENTION! for both nutrient it makes an asymptote in the right tail, so I put the limit in GR< 0.1 instead of 0 for tis algae
+
+ 
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.lower.temp.GR0.Hsin.L1<-which((ndat.Hsin3L1$temperature<Optimum.Temperature.HsinL1)&(ndat.Hsin3L1$Growth.rate<0))
+position.minimum.Temperature.Hsin.L1<-position.lower.temp.GR0.Hsin.L1[length(position.lower.temp.GR0.Hsin.L1)]
+minimum.Temperature.Hsin.L1<-ndat.Hsin3L1$temperature[position.minimum.Temperature.Hsin.L1]
+#minimum.Temperature.Hsin.L1
+
+#5
+position.lower.temp.GR0.Hsin.5<-which((ndat.Hsin35$temperature<Optimum.Temperature.Hsin5)&(ndat.Hsin35$Growth.rate<0))
+position.minimum.Temperature.Hsin.5<-position.lower.temp.GR0.Hsin.5[length(position.lower.temp.GR0.Hsin.5)]
+minimum.Temperature.Hsin.5<-ndat.Hsin35$temperature[position.minimum.Temperature.Hsin.5]
+#minimum.Temperature.Hsin.5
+
+
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+niche.width.Hsin.L1<-Maximum.Temperature.Hsin.L1-minimum.Temperature.Hsin.L1
+#niche.width.Hsin.L1
+
+#5
+niche.width.Hsin.5<-Maximum.Temperature.Hsin.5-minimum.Temperature.Hsin.5
+#niche.width.Hsin.5
+
+```
+
+
+
+#**************************************************************************************
+
+#PERIDERAION ELONGATUM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#reading data
+#    dat_Pelo<-read.xlsx2("./Pelo_Thomas_SEobserved.xlsx",2,colClasses = c("character","numeric","numeric","numeric","numeric"))
+
+dat_Pelo<-read_xlsx("./Pelo_Thomas_SEobserved.xlsx",sheet=2,col_types = c("text","numeric","numeric","numeric","numeric"),col_names = c("ID","Growth.rate","Growth.rate.SE","R^2","adj.R^2"))
+dat_Pelo = dat_Pelo[-1,]
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Pelo$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Pelo.curve<-bind_cols(Extra_columns_ID,dat_Pelo)
+
+Pelo.curve$temperature<-as.character(Pelo.curve$temperature)
+
+Pelo.curve$temperature<-as.numeric(Pelo.curve$temperature)
+
+```
+
+###GAM model fit
+##smoother temperatura by nitrate concentration, plus a parametric component nitrate concentration
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# GAM model fit:
+#	This includes a smoothed relationship between 
+#	growth rate and temperature, allows this shape to differ among nitrate treatments, 
+#	and also estimates a separate intercept between treatments.
+gm_Pelo<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=5)+Nitrate.concentration,data=Pelo.curve)
+
+summary(gm_Pelo)
+anova(gm_Pelo)
+
+```
+Temperature is significant only for L1 nitrate concentrations
+
+#exploring how different the temperature effect on growth rate is in L1 than in 5uM
+
+new smoother that shows the difference between the variability of growth rate with temperature of L1 respect to 5uM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+gm4_Pelo<-gam(Growth.rate~s(temperature,by = as.numeric(Nitrate.concentration == "L1"),k=5)+Nitrate.concentration+s(temperature, k=5),data=Pelo.curve)
+#we have included a new smoother that shows the difference between the variability of growth rate with temperature of N-replete respect to N-limited
+summary(gm4_Pelo)
+plot(gm4_Pelo)
+
+```
+The effect of temperature on the difference between L1 and 5uM is significant, and it increases around the optimum
+
+
+#making the plot with both curves together  error bars IC 95%
+
+###ATTENTION!! here, I've drawn the one with no penalty, as the plot looks better and the residuals are more normally distributed. However, the AIC indicates that the one with penalty is preferred, and temperature is significant only at L1 for both of them
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+gm2_Pelo<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=5,fx=T)+Nitrate.concentration,data=Pelo.curve)
+plot(gm2_Pelo)
+#plot the same but like if the smoother was not penalized for wiggliness. This allows us to check if the default fitting we have done has excesive whilingness correction or it is good
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# extract results of model fit for plotting:
+ndat.Pelo<-expand.grid(temperature=seq(10,34),Nitrate.concentration=c('L1','5'))
+#ndat.Pelo<-ndat.Pelo[!(ndat.Pelo$Nitrate.concentration=='L1' & ndat.Pelo$temperature>32),]
+pd.Pelo<-predict(gm2_Pelo,newdata=ndat.Pelo,type='response',se=T)
+ndat.Pelo$Growth.rate<-pd.Pelo$fit
+ndat.Pelo$se.fit<-pd.Pelo$se.fit
+ndat.Pelo$CI<-pd.Pelo$se.fit*1.96
+
+# generate plot:
+plot_Pelo<-ggplot(ndat.Pelo,aes(x=temperature,y=Growth.rate,Nitrate.concentration))+
+	
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  	geom_point(data=Pelo.curve,aes(colour=Nitrate.concentration, shape=Nitrate.concentration))+
+	geom_line(aes(colour=Nitrate.concentration, linetype=Nitrate.concentration),size=1)+
+	geom_line(aes(y=Growth.rate-CI,colour=Nitrate.concentration),linetype=3)+
+	geom_line(aes(y=Growth.rate+CI,colour=Nitrate.concentration),linetype=3)+
+	#scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous(expression("Growth rate (d"^"-1"*")"))+
+  ggtitle("Perideraion elongatum")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)
+
+plot_Pelo
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+
+##ATTENTION! calculations for the curve parametres are from the model with no penalty
+
+#I' going to expand the prediction first to be sure that we catch the niche limits
+ndat.Pelo2<-expand.grid(temperature=seq(11,40),Nitrate.concentration=c('L1','5'))
+pd.Pelo2<-predict(gm2_Pelo,newdata=ndat.Pelo2,type='response',se=T)
+ndat.Pelo2$Growth.rate<-pd.Pelo2$fit
+ndat.Pelo2$se.fit<-pd.Pelo2$se.fit
+ndat.Pelo2$CI<-pd.Pelo2$se.fit*1.96
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+ndat.Pelo3L1<-filter(ndat.Pelo2,ndat.Pelo2$Nitrate.concentration=="L1")
+Max.Growth.Rate.PeloL1<-max(ndat.Pelo3L1$Growth.rate)
+#Max.Growth.Rate.PeloL1
+
+#5
+ndat.Pelo35<-filter(ndat.Pelo2,ndat.Pelo2$Nitrate.concentration=="5")
+Max.Growth.Rate.Pelo5<-max(ndat.Pelo35$Growth.rate)
+#Max.Growth.Rate.Pelo5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.max.GR.PeloL1<-which(ndat.Pelo3L1$Growth.rate==Max.Growth.Rate.PeloL1)
+Optimum.Temperature.PeloL1<-ndat.Pelo3L1$temperature[position.max.GR.PeloL1]
+#Optimum.Temperature.PeloL1
+
+#5
+position.max.GR.Pelo5<-which(ndat.Pelo35$Growth.rate==Max.Growth.Rate.Pelo5)
+Optimum.Temperature.Pelo5<-ndat.Pelo35$temperature[position.max.GR.Pelo5]
+#Optimum.Temperature.Pelo5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.higher.temp.GR0.Pelo.L1<-which((ndat.Pelo3L1$temperature>Optimum.Temperature.PeloL1)&(ndat.Pelo3L1$Growth.rate<0))
+position.Maximum.Temperature.Pelo.L1<-position.higher.temp.GR0.Pelo.L1[1]
+Maximum.Temperature.Pelo.L1<-ndat.Pelo3L1$temperature[position.Maximum.Temperature.Pelo.L1]
+#Maximum.Temperature.Pelo.L1
+
+#5
+position.higher.temp.GR0.Pelo.5<-which((ndat.Pelo35$temperature>Optimum.Temperature.Pelo5)&(ndat.Pelo35$Growth.rate<0))
+position.Maximum.Temperature.Pelo.5<-position.higher.temp.GR0.Pelo.5[1]
+Maximum.Temperature.Pelo.5<-ndat.Pelo35$temperature[position.Maximum.Temperature.Pelo.5]
+#Maximum.Temperature.Pelo.5
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.lower.temp.GR0.Pelo.L1<-which((ndat.Pelo3L1$temperature<Optimum.Temperature.PeloL1)&(ndat.Pelo3L1$Growth.rate<0))
+position.minimum.Temperature.Pelo.L1<-position.lower.temp.GR0.Pelo.L1[length(position.lower.temp.GR0.Pelo.L1)]
+minimum.Temperature.Pelo.L1<-ndat.Pelo3L1$temperature[position.minimum.Temperature.Pelo.L1]
+#minimum.Temperature.Pelo.L1
+
+#5
+position.lower.temp.GR0.Pelo.5<-which((ndat.Pelo35$temperature<Optimum.Temperature.Pelo5)&(ndat.Pelo35$Growth.rate<0))
+position.minimum.Temperature.Pelo.5<-position.lower.temp.GR0.Pelo.5[length(position.lower.temp.GR0.Pelo.5)]
+minimum.Temperature.Pelo.5<-ndat.Pelo35$temperature[position.minimum.Temperature.Pelo.5]
+#minimum.Temperature.Pelo.5
+
+
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+niche.width.Pelo.L1<-Maximum.Temperature.Pelo.L1-minimum.Temperature.Pelo.L1
+#niche.width.Pelo.L1
+
+#5
+niche.width.Pelo.5<-Maximum.Temperature.Pelo.5-minimum.Temperature.Pelo.5
+#niche.width.Pelo.5
+
+```
+
+
+#**************************************************************************************
+
+#SKELETONEMA TROPICUM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#reading data
+#    dat_Stro<-read.xlsx2("./Stro_Thomas_SEobserved.xlsx",2,colClasses = c("character","numeric","numeric","numeric","numeric"))
+
+dat_Stro<-read_xlsx("./Stro_Thomas_SEobserved.xlsx",sheet=2,col_types = c("text","numeric","numeric","numeric","numeric"),col_names = c("ID","Growth.rate","Growth.rate.SE","R^2","adj.R^2"))
+dat_Stro = dat_Stro[-1,]
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Stro$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Stro.curve<-bind_cols(Extra_columns_ID,dat_Stro)
+
+Stro.curve$temperature<-as.character(Stro.curve$temperature)
+
+Stro.curve$temperature<-as.numeric(Stro.curve$temperature)
+
+```
+
+###GAM model fit
+##smoother temperatura by nitrate concentration, plus a parametric component nitrate concentration
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# GAM model fit:
+#	This includes a smoothed relationship between 
+#	growth rate and temperature, allows this shape to differ among nitrate treatments, 
+#	and also estimates a separate intercept between treatments.
+gm_Stro<-gam(Growth.rate~s(temperature,by=Nitrate.concentration, k=4)+Nitrate.concentration,data=Stro.curve)
+
+summary(gm_Stro)
+anova(gm_Stro)
+
+```
+Temperature is very significantfor both nitrate concentrations
+
+
+#exploring how different the temperature effect on growth rate is in L1 than in 5uM
+
+new smoother that shows the difference between the variability of growth rate with temperature of L1 respect to 5uM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+gm4_Stro<-gam(Growth.rate~s(temperature,by = as.numeric(Nitrate.concentration == "L1"),k=4)+Nitrate.concentration+s(temperature, k=4),data=Stro.curve)
+#we have included a new smoother that shows the difference between the variability of growth rate with temperature of N-replete respect to N-limited
+summary(gm4_Stro)
+plot(gm4_Stro)
+
+```
+The effect of temperature on the difference between L1 and 5uM is significant, and seems to increase with at 25-29ºC, around the optimum
+
+
+#making the plot with both curves together  error bars IC 95%
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+# extract results of model fit for plotting:
+ndat.Stro<-expand.grid(temperature=seq(10,34),Nitrate.concentration=c('L1','5'))
+#ndat.Stro<-ndat.Stro[!(ndat.Stro$Nitrate.concentration=='L1' & ndat.Stro$temperature>32),]
+pd.Stro<-predict(gm_Stro,newdata=ndat.Stro,type='response',se=T)
+ndat.Stro$Growth.rate<-pd.Stro$fit
+ndat.Stro$se.fit<-pd.Stro$se.fit
+ndat.Stro$CI<-pd.Stro$se.fit*1.96
+
+# generate plot:
+plot_Stro<-ggplot(ndat.Stro,aes(x=temperature,y=Growth.rate,Nitrate.concentration))+
+	
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  	geom_point(data=Stro.curve,aes(colour=Nitrate.concentration, shape=Nitrate.concentration))+
+	geom_line(aes(colour=Nitrate.concentration, linetype=Nitrate.concentration),size=1)+
+	geom_line(aes(y=Growth.rate-CI,colour=Nitrate.concentration),linetype=3)+
+	geom_line(aes(y=Growth.rate+CI,colour=Nitrate.concentration),linetype=3)+
+	#scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous(expression("Growth rate (d"^"-1"*")"))+
+  ggtitle("Skeletonema tropicum")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)
+
+plot_Stro
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#I' going to expand the prediction first to be sure that we catch the niche limits
+ndat.Stro2<-expand.grid(temperature=seq(0,100),Nitrate.concentration=c('L1','5'))
+pd.Stro2<-predict(gm_Stro,newdata=ndat.Stro2,type='response',se=T)
+ndat.Stro2$Growth.rate<-pd.Stro2$fit
+ndat.Stro2$se.fit<-pd.Stro2$se.fit
+ndat.Stro2$CI<-pd.Stro2$se.fit*1.96
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+ndat.Stro3L1<-filter(ndat.Stro2,ndat.Stro2$Nitrate.concentration=="L1")
+Max.Growth.Rate.StroL1<-max(ndat.Stro3L1$Growth.rate)
+#Max.Growth.Rate.StroL1
+
+#5
+ndat.Stro35<-filter(ndat.Stro2,ndat.Stro2$Nitrate.concentration=="5")
+Max.Growth.Rate.Stro5<-max(ndat.Stro35$Growth.rate)
+#Max.Growth.Rate.Stro5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.max.GR.StroL1<-which(ndat.Stro3L1$Growth.rate==Max.Growth.Rate.StroL1)
+Optimum.Temperature.StroL1<-ndat.Stro3L1$temperature[position.max.GR.StroL1]
+#Optimum.Temperature.StroL1
+
+#5
+position.max.GR.Stro5<-which(ndat.Stro35$Growth.rate==Max.Growth.Rate.Stro5)
+Optimum.Temperature.Stro5<-ndat.Stro35$temperature[position.max.GR.Stro5]
+#Optimum.Temperature.Stro5
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.higher.temp.GR0.Stro.L1<-which((ndat.Stro3L1$temperature>Optimum.Temperature.StroL1)&(ndat.Stro3L1$Growth.rate<0))
+position.Maximum.Temperature.Stro.L1<-position.higher.temp.GR0.Stro.L1[1]
+Maximum.Temperature.Stro.L1<-ndat.Stro3L1$temperature[position.Maximum.Temperature.Stro.L1]
+#Maximum.Temperature.Stro.L1
+
+#5
+position.higher.temp.GR0.Stro.5<-which((ndat.Stro35$temperature>Optimum.Temperature.Stro5)&(ndat.Stro35$Growth.rate<0))
+position.Maximum.Temperature.Stro.5<-position.higher.temp.GR0.Stro.5[1]
+Maximum.Temperature.Stro.5<-ndat.Stro35$temperature[position.Maximum.Temperature.Stro.5]
+#Maximum.Temperature.Stro.5
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+position.lower.temp.GR0.Stro.L1<-which((ndat.Stro3L1$temperature<Optimum.Temperature.StroL1)&(ndat.Stro3L1$Growth.rate<0))
+position.minimum.Temperature.Stro.L1<-position.lower.temp.GR0.Stro.L1[length(position.lower.temp.GR0.Stro.L1)]
+minimum.Temperature.Stro.L1<-ndat.Stro3L1$temperature[position.minimum.Temperature.Stro.L1]
+#minimum.Temperature.Stro.L1
+
+#5
+position.lower.temp.GR0.Stro.5<-which((ndat.Stro35$temperature<Optimum.Temperature.Stro5)&(ndat.Stro35$Growth.rate<0))
+position.minimum.Temperature.Stro.5<-position.lower.temp.GR0.Stro.5[length(position.lower.temp.GR0.Stro.5)]
+minimum.Temperature.Stro.5<-ndat.Stro35$temperature[position.minimum.Temperature.Stro.5]
+#minimum.Temperature.Stro.5
+
+
+```
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE,include=FALSE}
+#L1
+niche.width.Stro.L1<-Maximum.Temperature.Stro.L1-minimum.Temperature.Stro.L1
+#niche.width.Stro.L1
+
+#5
+niche.width.Stro.5<-Maximum.Temperature.Stro.5-minimum.Temperature.Stro.5
+#niche.width.Stro.5
+
+```
+#**************************************************************************************
+
+
+#Summary table with curve parameters
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+mrownames<-c("Skeletonema tropicum L1","Skeletonema tropicum 5","Chaetoceros simplex L1","Chaetoceros simplex 5","Perideraion elongatum L1","Perideraion elongatum 5","Astrosyne radiata L1","Astrosyne radiata 5","Hemiaulus sinensis L1","Hemiaulus sinensis 5","Coscinodiscus concinnus L1","Coscinodiscus concinnus 5")
+mcolnames<-c("MaxGR","Topt","MaxT","minT","niche","environment")
+table.data<-matrix(NA, length(mrownames), length(mcolnames))
+    rownames(table.data) = mrownames
+    colnames(table.data) = mcolnames
+    
+    table.data[3,1] = round(Max.Growth.Rate.ChsimL1, digits=2)
+    table.data[4,1] = round(Max.Growth.Rate.Chsim5, digits=2)
+    table.data[7,1] = round(Max.Growth.Rate.AradL1, digits=2)
+    table.data[8,1] = round(Max.Growth.Rate.Arad5, digits=2)
+    table.data[11,1] = round(Max.Growth.Rate.CconL1, digits=2)
+    table.data[12,1] = round(Max.Growth.Rate.Ccon5, digits=2)
+    table.data[9,1] = round(Max.Growth.Rate.HsinL1, digits=2)
+    table.data[10,1] = round(Max.Growth.Rate.Hsin5, digits=2)
+    table.data[5,1] = round(Max.Growth.Rate.PeloL1, digits=2)
+    table.data[6,1] = round(Max.Growth.Rate.Pelo5, digits=2)
+    table.data[1,1] = round(Max.Growth.Rate.StroL1, digits=2)
+    table.data[2,1] = round(Max.Growth.Rate.Stro5, digits=2)
+ 
+    table.data[3,2] =Optimum.Temperature.ChsimL1
+    table.data[4,2] = Optimum.Temperature.Chsim5
+    table.data[7,2] = Optimum.Temperature.AradL1
+    table.data[8,2] = Optimum.Temperature.Arad5
+    table.data[11,2] = Optimum.Temperature.CconL1
+    table.data[12,2] = Optimum.Temperature.Ccon5
+    table.data[9,2] = Optimum.Temperature.HsinL1
+    table.data[10,2] = Optimum.Temperature.Hsin5
+    table.data[5,2] = Optimum.Temperature.PeloL1
+    table.data[6,2] = Optimum.Temperature.Pelo5
+    table.data[1,2] = Optimum.Temperature.StroL1
+    table.data[2,2] = Optimum.Temperature.Stro5
+    
+     table.data[3,3] =Maximum.Temperature.Chsim.L1
+    table.data[4,3] = Maximum.Temperature.Chsim.5
+    table.data[7,3] = Maximum.Temperature.Arad.L1
+    table.data[8,3] = Maximum.Temperature.Arad.5
+    table.data[11,3] = Maximum.Temperature.Ccon.L1
+    table.data[12,3] = Maximum.Temperature.Ccon.5
+    table.data[9,3] = Maximum.Temperature.Hsin.L1
+    table.data[10,3] = Maximum.Temperature.Hsin.5
+    table.data[5,3] = Maximum.Temperature.Pelo.L1
+    table.data[6,3] = Maximum.Temperature.Pelo.5
+    table.data[1,3] = Maximum.Temperature.Stro.L1
+    table.data[2,3] = Maximum.Temperature.Stro.5
+    
+    table.data[3,4] =minimum.Temperature.Chsim.L1
+    table.data[4,4] = minimum.Temperature.Chsim.5
+    table.data[7,4] = minimum.Temperature.Arad.L1
+    table.data[8,4] = minimum.Temperature.Arad.5
+    table.data[11,4] = minimum.Temperature.Ccon.L1
+    table.data[12,4] = minimum.Temperature.Ccon.5
+    table.data[9,4] = minimum.Temperature.Hsin.L1
+    table.data[10,4] = minimum.Temperature.Hsin.5
+    table.data[5,4] = minimum.Temperature.Pelo.L1
+    table.data[6,4] = minimum.Temperature.Pelo.5
+    table.data[1,4] = minimum.Temperature.Stro.L1
+    table.data[2,4] = minimum.Temperature.Stro.5
+    
+    table.data[3,5] =niche.width.Chsim.L1
+    table.data[4,5] = niche.width.Chsim.5
+    table.data[7,5] = niche.width.Arad.L1
+    table.data[8,5] = niche.width.Arad.5
+    table.data[11,5] = niche.width.Ccon.L1
+    table.data[12,5] = niche.width.Ccon.5
+    table.data[9,5] = niche.width.Hsin.L1
+    table.data[10,5] = niche.width.Hsin.5
+    table.data[5,5] = niche.width.Pelo.L1
+    table.data[6,5] = niche.width.Pelo.5
+    table.data[1,5] = niche.width.Stro.L1
+    table.data[2,5] = niche.width.Stro.5
+    
+    table.data[3,6] = "Cosmopolitan \n -tropical strain"
+    table.data[4,6] = ""
+    table.data[7,6] = "Tropical"
+    table.data[8,6] = ""
+    table.data[11,6] = "Cosmopolitan"
+    table.data[12,6] = ""
+    table.data[9,6] = "Temperate"
+    table.data[10,6] = ""
+    table.data[5,6] = "Tropical"
+    table.data[6,6] = ""
+    table.data[1,6] = "Tropical"
+    table.data[2,6] = ""      
+
+grid.newpage()   
+grid.table(table.data)
+
+
+jpeg(filename = "Summary_Curve_Parameters_Format.jpg",res=600, units = "mm", width=164) #I've created a jpg with the specified name, with the spcified size and resolution (usually for ptintting is 300)
+grid.table(table.data)
+ #call the plot-variable to put it in the jpg
+dev.off() #closes the jpg
+
+```
+#####Species ordered by size
+#####MaxGR: highest growth rate from the GAM fit
+#####Topt: temperature of the highest growth rate from the GAM fit
+#####MaxT: high limit of the niche, calculated as the first temperature to the right of the Topt at which growth rate is lower than 0 (or 0.1 depending on the species)
+#####minT:low limit of the niche, calculated as the first temperature to the left of the Topt at which growth rate is lower than 0 (or 0.1 depending on the species)
+#####niche: range of temperature degrees between MaxT and minT
+
+
+
+
+#Summary table with significances
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+mcolnames.signf<-c("environment","Temp \n effect","Between \n N-treatments","Temp effect \n between \n N-treatments","biggest difference \n between \n N-treatments")
+
+table.data.signf<-matrix(NA, length(mrownames), length(mcolnames.signf))
+    rownames(table.data.signf) = mrownames
+    colnames(table.data.signf) = mcolnames.signf
+
+  table.data.signf[3,1] = "Cosmopolitan \n -tropical strain"
+    table.data.signf[4,1] = ""
+    table.data.signf[7,1] = "Tropical"
+    table.data.signf[8,1] = ""
+    table.data.signf[11,1] = "Cosmopolitan"
+    table.data.signf[12,1] = ""
+    table.data.signf[9,1] = "Temperate"
+    table.data.signf[10,1] = ""
+    table.data.signf[5,1] = "Tropical"
+    table.data.signf[6,1] = ""
+    table.data.signf[1,1] = "Tropical"
+    table.data.signf[2,1] = ""      
+    
+     table.data.signf[3,2] ="***"
+    table.data.signf[4,2] = "***"
+    table.data.signf[7,2] = "***"
+    table.data.signf[8,2] = "***"
+    table.data.signf[11,2] ="**"
+    table.data.signf[12,2] ="ns"
+    table.data.signf[9,2] = "***"
+    table.data.signf[10,2] = "***"
+    table.data.signf[5,2] = "***"
+    table.data.signf[6,2] = "ns"
+    table.data.signf[1,2] = "***"
+    table.data.signf[2,2] = "***"
+
+    table.data.signf[3,3] ="***"
+    table.data.signf[4,3] = ""
+    table.data.signf[7,3] = "***"
+    table.data.signf[8,3] = ""
+    table.data.signf[11,3] = "**"
+    table.data.signf[12,3] = ""
+    table.data.signf[9,3] = "***"
+    table.data.signf[10,3] = ""
+    table.data.signf[5,3] = "*"
+    table.data.signf[6,3] = ""
+    table.data.signf[1,3] = "ns"
+    table.data.signf[2,3] = ""
+        
+     table.data.signf[3,4] ="***"
+    table.data.signf[4,4] = ""
+    table.data.signf[7,4] = "***"
+    table.data.signf[8,4] = ""
+    table.data.signf[11,4] = "ns"
+    table.data.signf[12,4] =""
+    table.data.signf[9,4] = "***"
+    table.data.signf[10,4] = ""
+    table.data.signf[5,4] = "*"
+    table.data.signf[6,4] = ""
+    table.data.signf[1,4] = "**"
+    table.data.signf[2,4] = ""
+    
+    table.data.signf[3,5] ="Topt"
+    table.data.signf[4,5] = ""
+    table.data.signf[7,5] = "Topt"
+    table.data.signf[8,5] = ""
+    table.data.signf[11,5] ="Topt"
+    table.data.signf[12,5] = ""
+    table.data.signf[9,5] = "highest T"
+    table.data.signf[10,5] = ""
+    table.data.signf[5,5] = "Topt"
+    table.data.signf[6,5] = ""
+    table.data.signf[1,5] ="Topt"
+    table.data.signf[2,5] = ""
+    
+grid.newpage()   
+grid.table(table.data.signf)
+
+
+jpeg(filename = "Summary_Curve_Significance.jpg",res=600, units = "mm", width=164) #I've created a jpg with the specified name, with the spcified size and resolution (usually for ptintting is 300)
+grid.table(table.data.signf)
+ #call the plot-variable to put it in the jpg
+dev.off() #closes the jpg
+```
+#####Species ordered by size
+#####Between N-treatments:This refers to the ANOVA test comparing GAM fitting for L1 and 5uM for each species
+#####Temp effect between N-treatments: This refers to the significance of the smoother on which we check the effect of temperature on the growth rate difference between L1 and 5uM for each species
+#####biggest difference between N-treatments: This refers to the trend of the GAM fitting for the diference between L1 and 5uM 
+
+
+
+
+#All plots together
+#####purple is 5uM and orange L1, error bands are CI 95%
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#create the title
+AllCurves_title<-textGrob("Thermal performance curves",gp=gpar(fontfamily="Times New Roman",size=16))
+#create the image
+jpeg(filename = "All_Curves_GAM.jpg",res=600, units = "mm", width=164, height = 183) #I've created a jpg with the specified name, with the spcified size and resolution (usually for ptintting is 300)
+Curves_Together<-grid.arrange(plot_Stro,plot_Chsim, plot_Pelo, plot_Hsin, plot_Arad, plot_Ccon, top= AllCurves_title)
+ #call the plot-variable to put it in the jpg
+dev.off() #closes the jpg
+
+Curves_Together
+```
+
+
+
+#plotting the differences between growth rates at L1 and 5 NuM
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#split the L1 and 5 data from the data file with only the temperature range 10-40
+
+ndat.Stro.L1<-filter(ndat.Stro,ndat.Stro$Nitrate.concentration=="L1")
+ndat.Stro.5<-filter(ndat.Stro,ndat.Stro$Nitrate.concentration=="5")
+
+ndat.Chsim.L1<-filter(ndat.Chsim,ndat.Chsim$Nitrate.concentration=="L1")
+ndat.Chsim.5<-filter(ndat.Chsim,ndat.Chsim$Nitrate.concentration=="5")
+
+ndat.Pelo.L1<-filter(ndat.Pelo,ndat.Pelo$Nitrate.concentration=="L1")
+ndat.Pelo.5<-filter(ndat.Pelo,ndat.Pelo$Nitrate.concentration=="5")
+
+ndat.Arad.L1<-filter(ndat.Arad,ndat.Arad$Nitrate.concentration=="L1")
+ndat.Arad.5<-filter(ndat.Arad,ndat.Arad$Nitrate.concentration=="5")
+
+ndat.Hsin.L1<-filter(ndat.Hsin,ndat.Hsin$Nitrate.concentration=="L1")
+ndat.Hsin.5<-filter(ndat.Hsin,ndat.Hsin$Nitrate.concentration=="5")
+
+ndat.Ccon.L1<-filter(ndat.Ccon,ndat.Ccon$Nitrate.concentration=="L1")
+ndat.Ccon.5<-filter(ndat.Ccon,ndat.Ccon$Nitrate.concentration=="5")
+
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Stro2.columns<-inner_join(ndat.Stro.L1,ndat.Stro.5,by="temperature")
+ndat.Chsim2.columns<-inner_join(ndat.Chsim.L1,ndat.Chsim.5,by="temperature")
+ndat.Pelo2.columns<-inner_join(ndat.Pelo.L1,ndat.Pelo.5,by="temperature")
+ndat.Arad2.columns<-inner_join(ndat.Arad.L1,ndat.Arad.5,by="temperature")
+ndat.Hsin2.columns<-inner_join(ndat.Hsin.L1,ndat.Hsin.5,by="temperature")
+ndat.Ccon2.columns<-inner_join(ndat.Ccon.L1,ndat.Ccon.5,by="temperature")
+
+#Calculate the new variables for the difference for each sps
+
+
+ndat.Stro2.columns<-mutate(ndat.Stro2.columns,Growth.rate.difference=Growth.rate.x-Growth.rate.y)
+ndat.Chsim2.columns<-mutate(ndat.Chsim2.columns,Growth.rate.difference=Growth.rate.x-Growth.rate.y)
+ndat.Pelo2.columns<-mutate(ndat.Pelo2.columns,Growth.rate.difference=Growth.rate.x-Growth.rate.y)
+ndat.Arad2.columns<-mutate(ndat.Arad2.columns,Growth.rate.difference=Growth.rate.x-Growth.rate.y)
+ndat.Hsin2.columns<-mutate(ndat.Hsin2.columns,Growth.rate.difference=Growth.rate.x-Growth.rate.y)
+ndat.Ccon2.columns<-mutate(ndat.Ccon2.columns,Growth.rate.difference=Growth.rate.x-Growth.rate.y)
+
+#***************
+
+ #DIFFERENCE  
+
+plot_difference_Stro<-ggplot(ndat.Stro2.columns,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+	#scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous('Growth rate difference')+
+  ggtitle("Skeletonema tropicum")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Optimum.Temperature.StroL1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Stro5)
+
+#plot_difference_Stro
+
+plot_difference_Chsim<-ggplot(ndat.Chsim2.columns,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+	#scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous('Growth rate difference')+
+  ggtitle("Chaetoceros simplex")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Optimum.Temperature.ChsimL1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Chsim5)
+
+#plot_difference_Chsim
+
+
+plot_difference_Pelo<-ggplot(ndat.Pelo2.columns,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+	#scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous('Growth rate difference')+
+  ggtitle("Perideraiom elongatum")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Optimum.Temperature.PeloL1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Pelo5)
+
+#plot_difference_Pelo
+
+
+plot_difference_Arad<-ggplot(ndat.Arad2.columns,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+	scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous('Growth rate difference')+
+  ggtitle("Astrosyne radiata")+
+	theme_bw()+
+  theme(legend.position="none",plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Optimum.Temperature.AradL1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Arad5)
+
+#plot_difference_Arad
+
+
+plot_difference_Hsin<-ggplot(ndat.Hsin2.columns,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+	#scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous('Growth rate difference')+
+  ggtitle("Hemiaulus sinensis")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Optimum.Temperature.HsinL1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Hsin5)
+
+#plot_difference_Hsin
+
+
+plot_difference_Ccon<-ggplot(ndat.Ccon2.columns,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+	scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous('Growth rate difference')+
+  ggtitle("Coscinodiscus concinnus")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Optimum.Temperature.CconL1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Ccon5)
+
+#plot_difference_Ccon
+
+
+
+GR_differences_Together<-grid.arrange(plot_difference_Stro,plot_difference_Chsim, plot_difference_Pelo, plot_difference_Hsin, plot_difference_Arad, plot_difference_Ccon)
+
+GR_differences_Together
+
+#create the title
+AllCurves_differences_title<-textGrob("Difference in growth rate between high N and low N conditions",gp=gpar(fontfamily="Times New Roman",size=16))
+
+
+#create the image
+jpeg(filename = "All_Curves_Differences_GAM.jpg",res=600, units = "mm", width=164, height = 183) #I've created a pnj with the specified name, with the spcified size and resolution (usually for ptintting is 300)
+GR_differences_Together<-grid.arrange(plot_difference_Stro,plot_difference_Chsim, plot_difference_Pelo, plot_difference_Hsin, plot_difference_Arad, plot_difference_Ccon, top=AllCurves_differences_title)
+ #call the plot-variable to put it in the jpg
+dev.off() #closes the jpg
+
+GR_differences_Together
+
+
+```
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Stro<-max(ndat.Stro2.columns$Growth.rate.difference)
+position.max.GR.Difference.Stro<-which(ndat.Stro2.columns$Growth.rate.difference==Max.GR.Difference.Stro)
+Temperature.Max.GR.Difference.Stro<-ndat.Stro2.columns$temperature[position.max.GR.Difference.Stro]
+
+Max.GR.Difference.Chsim<-max(ndat.Chsim2.columns$Growth.rate.difference)
+position.max.GR.Difference.Chsim<-which(ndat.Chsim2.columns$Growth.rate.difference==Max.GR.Difference.Chsim)
+Temperature.Max.GR.Difference.Chsim<-ndat.Chsim2.columns$temperature[position.max.GR.Difference.Chsim]
+
+Max.GR.Difference.Pelo<-max(ndat.Pelo2.columns$Growth.rate.difference)
+position.max.GR.Difference.Pelo<-which(ndat.Pelo2.columns$Growth.rate.difference==Max.GR.Difference.Pelo)
+Temperature.Max.GR.Difference.Pelo<-ndat.Pelo2.columns$temperature[position.max.GR.Difference.Pelo]
+
+Max.GR.Difference.Arad<-max(ndat.Arad2.columns$Growth.rate.difference)
+position.max.GR.Difference.Arad<-which(ndat.Arad2.columns$Growth.rate.difference==Max.GR.Difference.Arad)
+Temperature.Max.GR.Difference.Arad<-ndat.Arad2.columns$temperature[position.max.GR.Difference.Arad]
+
+Max.GR.Difference.Hsin<-max(ndat.Hsin2.columns$Growth.rate.difference)
+position.max.GR.Difference.Hsin<-which(ndat.Hsin2.columns$Growth.rate.difference==Max.GR.Difference.Hsin)
+Temperature.Max.GR.Difference.Hsin<-ndat.Hsin2.columns$temperature[position.max.GR.Difference.Hsin]
+
+Max.GR.Difference.Ccon<-max(ndat.Ccon2.columns$Growth.rate.difference)
+position.max.GR.Difference.Ccon<-which(ndat.Ccon2.columns$Growth.rate.difference==Max.GR.Difference.Ccon)
+Temperature.Max.GR.Difference.Ccon<-ndat.Ccon2.columns$temperature[position.max.GR.Difference.Ccon]
+
+#Generating a table to compare differences with optimum temperature
+
+mrownames<-c("Skeletonema tropicum L1","Skeletonema tropicum 5","Chaetoceros simplex L1","Chaetoceros simplex 5","Perideraion elongatum L1","Perideraion elongatum 5","Astrosyne radiata L1","Astrosyne radiata 5","Hemiaulus sinensis L1","Hemiaulus sinensis 5","Coscinodiscus concinnus L1","Coscinodiscus concinnus 5")
+mcolnames<-c("MaxGR","Topt","MaxDifference","TMaxDifference")
+table.data<-matrix(NA, length(mrownames), length(mcolnames))
+    rownames(table.data) = mrownames
+    colnames(table.data) = mcolnames
+    
+    table.data[3,1] = round(Max.Growth.Rate.ChsimL1, digits=2)
+    table.data[4,1] = round(Max.Growth.Rate.Chsim5, digits=2)
+    table.data[7,1] = round(Max.Growth.Rate.AradL1, digits=2)
+    table.data[8,1] = round(Max.Growth.Rate.Arad5, digits=2)
+    table.data[11,1] = round(Max.Growth.Rate.CconL1, digits=2)
+    table.data[12,1] = round(Max.Growth.Rate.Ccon5, digits=2)
+    table.data[9,1] = round(Max.Growth.Rate.HsinL1, digits=2)
+    table.data[10,1] = round(Max.Growth.Rate.Hsin5, digits=2)
+    table.data[5,1] = round(Max.Growth.Rate.PeloL1, digits=2)
+    table.data[6,1] = round(Max.Growth.Rate.Pelo5, digits=2)
+    table.data[1,1] = round(Max.Growth.Rate.StroL1, digits=2)
+    table.data[2,1] = round(Max.Growth.Rate.Stro5, digits=2)
+ 
+    table.data[3,2] =Optimum.Temperature.ChsimL1
+    table.data[4,2] = Optimum.Temperature.Chsim5
+    table.data[7,2] = Optimum.Temperature.AradL1
+    table.data[8,2] = Optimum.Temperature.Arad5
+    table.data[11,2] = Optimum.Temperature.CconL1
+    table.data[12,2] = Optimum.Temperature.Ccon5
+    table.data[9,2] = Optimum.Temperature.HsinL1
+    table.data[10,2] = Optimum.Temperature.Hsin5
+    table.data[5,2] = Optimum.Temperature.PeloL1
+    table.data[6,2] = Optimum.Temperature.Pelo5
+    table.data[1,2] = Optimum.Temperature.StroL1
+    table.data[2,2] = Optimum.Temperature.Stro5
+    
+     table.data[3,3] =Max.GR.Difference.Chsim
+    table.data[4,3] = Max.GR.Difference.Chsim
+    table.data[7,3] = Max.GR.Difference.Arad
+    table.data[8,3] = Max.GR.Difference.Arad
+    table.data[11,3] = Max.GR.Difference.Ccon
+    table.data[12,3] = Max.GR.Difference.Ccon
+    table.data[9,3] = Max.GR.Difference.Hsin
+    table.data[10,3] = Max.GR.Difference.Hsin
+    table.data[5,3] = Max.GR.Difference.Pelo
+    table.data[6,3] = Max.GR.Difference.Pelo
+    table.data[1,3] = Max.GR.Difference.Stro
+    table.data[2,3] = Max.GR.Difference.Stro
+    
+    table.data[3,4] =Temperature.Max.GR.Difference.Chsim
+    table.data[4,4] = Temperature.Max.GR.Difference.Chsim
+    table.data[7,4] = Temperature.Max.GR.Difference.Arad
+    table.data[8,4] = Temperature.Max.GR.Difference.Arad
+    table.data[11,4] = Temperature.Max.GR.Difference.Ccon
+    table.data[12,4] = Temperature.Max.GR.Difference.Ccon
+    table.data[9,4] = Temperature.Max.GR.Difference.Hsin
+    table.data[10,4] = Temperature.Max.GR.Difference.Hsin
+    table.data[5,4] = Temperature.Max.GR.Difference.Pelo
+    table.data[6,4] = Temperature.Max.GR.Difference.Pelo
+    table.data[1,4] = Temperature.Max.GR.Difference.Stro
+    table.data[2,4] = Temperature.Max.GR.Difference.Stro
+
+grid.newpage()   
+grid.table(table.data)
+
+
+```
+
+
+
+
+

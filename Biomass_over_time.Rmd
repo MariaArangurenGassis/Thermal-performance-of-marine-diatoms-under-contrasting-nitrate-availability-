@@ -1,0 +1,256 @@
+---
+title: "Growth_SpeciesCurves"
+author: "Maria Aranguren-Gassis"
+date: "18/10/2019"
+output: html_document
+---
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(purrr) #to use map2()
+library(tidyr)
+library(dplyr)
+#library(xlsx)
+library(ggplot2)
+library(readxl)
+library(car) #for Levene test
+
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#List of species
+Sps<-c("Arad","Ccon","Chsim","Hsin","Pelo","Stro")
+
+
+path_data_files<-as.character(paste(as.character(Sps),"_Thomas_SEobserved.xlsx",sep="")) #create the names of the data files
+
+
+
+#Read all data at once 
+
+
+#******
+#Biomass data
+
+importFile_data<-function(x){
+ a<-read_xlsx(x,sheet=1)
+ b<-select(a,SPECIE,DATE.AND.TIME,TEMPERATURA,CONCENTRACION.DE.NITRATO,REPLICATE,FLUORESCENCE.Flask)
+ c<-mutate(b,DATE.AND.TIME = as.POSIXct(DATE.AND.TIME,format="%m/%d/%Y %H:%M"))
+ d<-mutate(c,TEMPERATURA=as.character(TEMPERATURA))
+ e<-mutate(d,TEMPERATURA=as.numeric(TEMPERATURA))
+ f<-mutate(e,REPLICATE=as.character(REPLICATE))
+ g<-mutate(f,FLUORESCENCE.Flask=as.numeric(FLUORESCENCE.Flask))
+ h<-mutate(g,SPECIE=as.character(SPECIE))
+ i<-mutate(h,CONCENTRACION.DE.NITRATO=as.character(CONCENTRACION.DE.NITRATO))
+ j<-mutate(i,curveID=paste (TEMPERATURA, CONCENTRACION.DE.NITRATO, REPLICATE, sep = " ", collapse = NULL))
+ h<-mutate(j,LnFLUORESCENCE=log(FLUORESCENCE.Flask))
+ h
+  }
+
+datalist = lapply(path_data_files, importFile_data) #A list of data frame with the data for all the species
+
+
+#add a column with the complete name for each sps
+complete_Sps<-c("Astrosyne radiata","Coscinodiscus concinnus","Chaetoceros simplex","Hemiaulus sinensis","Perideraion elongatum","Skeletonema tropicum")
+
+#function to check wich species the data frame correspond and add a column with the complete name
+#x: sps number
+Sustitute_sps_names<-function(x){
+  a<-datalist[[x]] #extract the data frame
+b<-a$SPECIE[1] #which species it is?
+c<-match(b,Sps) #locate the sps order in the sps vector
+d<-complete_Sps[c] #identify the complete sps name
+e<-mutate(a,complete_Sps=rep(d,length(a$SPECIE))) #create a new variable with the complete name
+ e 
+}
+
+datalist2<-lapply(c(1:length(Sps)),Sustitute_sps_names)
+
+
+#add a column with the complete name for each nitrate treatment (L1=high N; 5=low N)
+#function to create the new columns
+#x: sps number
+complete_nitrate<-function(x){
+  a<-datalist2[[x]]
+  b<-mutate(a,complete_nitrate_treatment = ifelse(CONCENTRACION.DE.NITRATO=="L1","high N","low N"))
+  b
+  }
+datalist3<-lapply(c(1:length(Sps)),complete_nitrate)
+
+
+
+
+#Add a column with time from the first day of each curve in days
+#x:vector with the number of curves; y:data frame with all curves data;z: curves list identificators
+Add_time<-function(x,y,z){
+  n<-z[x] #extract the curve identificator
+  a2<-filter(y,y$curveID==n)  #get data for that particular curve
+  date1<-min(a2$DATE.AND.TIME) #the date and time for the first day on that particular curve
+  b2<-mutate(a2,Days=difftime(a2$DATE.AND.TIME,date1,units="days"))
+  b2
+}
+
+#do it for every cuve
+#x:vector with the number of species;
+Add_time_All<-function(x){
+a<-datalist3[[x]]
+curves_list<-unique(a$curveID)
+r<-lapply(1:length(curves_list),Add_time,y=a,z=curves_list)
+r
+}
+
+#do it for every sps
+datalist4<-lapply(c(1:length(Sps)),Add_time_All)
+
+#I need to put together the data for all the curves in each sps. x:a vector with the number of sps
+Reunite_curves<-function(x){
+  a<-datalist4[[x]]
+  b<-bind_rows(a)
+  b
+}
+
+datalist5<-lapply(c(1:length(Sps)),Reunite_curves)
+
+
+
+
+#******
+#Exponential growth dates
+importFile_GrowthDates<-function(x){
+ a<-read_xlsx(x,sheet=5)
+ b<-mutate(a,exp.growth.start.date = as.POSIXct(exp.growth.start.date,format="%Y-%m-%d %H:%M:%OS"))
+ c<-mutate(b,exp.growth.end.date = as.POSIXct(exp.growth.end.date,format="%Y-%m-%d %H:%M:%OS"))
+ c
+  
+  }
+
+DatesGrowthlist = lapply(path_data_files, importFile_GrowthDates) #A list of data frame with the data for all the species
+
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#With dots and the growth rate regression line at the selected data
+
+#Create another data frame with only the data selected for regressions
+
+#function that filter the data according to the dates used for regression
+#x:vector with the number of curves;  y:data frame with all curves data; z:data frame with dates for regression; w:list of curves identificators 
+filter_by_date<-function(x,y,z,w){
+    n<-w[x] #extract the curve identificator
+    a2<-filter(y,y$curveID==n)  #get data for that particular curve
+    b2<-filter(z,z$id==n)#get regression dates for that particular curve
+    a3<-filter(a2,a2$DATE.AND.TIME>=b2$exp.growth.start.date)
+    a4<-filter(a3,a3$DATE.AND.TIME<=b2$exp.growth.end.date)
+    a4
+}
+
+
+#a function that extract the data frame for each species from the data and the list of dates. x:vector with number of species
+regressionsFile_data<-function(x){
+  
+    a<-datalist5[[x]] #select the data frame for each one of the species data
+    b<-DatesGrowthlist[[x]] #select the data frame for each one of the species dates 
+    curves_list<-unique(a$curveID) #list of all the combinations of temperature, nitrate and replicate 
+    r<-lapply(1:length(curves_list),filter_by_date,y=a,z=b,w=curves_list)
+    r
+}
+  
+
+regressions_datalist = lapply(c(1:length(Sps)), regressionsFile_data) #A list of data frame with the data for all the species, only those used to fit the linear regression
+
+#I need to put together the data for all the curves in each sps. x:a vector with the number of sps
+Curves_together<-function(x){
+  a<-regressions_datalist[[x]]
+  b<-bind_rows(a)
+  b
+}
+
+regressions_datalist2<-lapply(c(1:length(Sps)),Curves_together)
+
+#Function to save the individual plots as png files 
+#x: species; y:the plot
+Save_png<-function(x,y){
+  png(filename = paste(as.character(x),".png"),res=300, units = "mm", height = 183, width=183) 
+  y #call the plot-variable to put it in the png
+  dev.off() #closes the png
+  }
+  
+#For L1 nutrients
+#x: vector with number of species
+Plotting_growth_L1_dots<-function(x){
+  #Extract the corresponding data frames
+  #For dots
+  a<-datalist5[[x]]
+  aL1_dots<-filter(a,CONCENTRACION.DE.NITRATO=="L1")
+  #For regression
+  r<-regressions_datalist2[[x]]
+  rL1_regressions<-filter(r,CONCENTRACION.DE.NITRATO=="L1")
+  #Plot
+  TitleL1<-paste (as.character(a$complete_Sps[1]),"")
+  bL1_dots<-ggplot(aL1_dots,aes(x=Days,y=LnFLUORESCENCE, group=REPLICATE))+
+    #scale_colour_manual(values=c("cadetblue1","cadetblue3","cadetblue4","darkslategrey","dodgerblue4"))+
+    scale_colour_manual(values=c("sandybrown","salmon2","salmon3","orange4","salmon4"))+
+    #scale_colour_grey(start = 0, end = .7) +
+    geom_point(data=aL1_dots,aes(colour=REPLICATE))+
+    geom_smooth(data=rL1_regressions,method="lm",aes(colour=REPLICATE),se=F)+
+    facet_wrap(~TEMPERATURA)+
+    theme_bw()+
+    theme(plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+    ggtitle(TitleL1)+
+    xlab("Time (days)")+
+    ylab("Biomass (lnFluorescence)")+
+    ggsave(file=paste(Sps[x],"_growDynamics_L1.png",sep=""),dpi = 600)
+  
+  bL1_dots
+  }
+
+
+test_L1_dots<-lapply(c(1:length(Sps)),Plotting_growth_L1_dots)
+test_L1_dots
+```
+
+####N low
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#For 5uM nutrients
+
+
+Plotting_growth_5_dots<-function(x){
+  #Extract the corresponding data frames
+  #For dots
+  a<-datalist5[[x]]
+  a5_dots<-filter(a,CONCENTRACION.DE.NITRATO=="5")
+  #For regression
+  r<-regressions_datalist2[[x]]
+  r5_regressions<-filter(r,CONCENTRACION.DE.NITRATO=="5")
+  #Plot
+  Title5<-paste (as.character(a$complete_Sps[1]),"")
+  b5_dots<-ggplot(a5_dots,aes(x=Days,y=LnFLUORESCENCE, group=REPLICATE))+
+    #scale_colour_manual(values=c("cadetblue1","cadetblue3","cadetblue4","darkslategrey","dodgerblue4"))+
+    scale_colour_manual(values=c("mediumpurple1","mediumpurple3","mediumpurple4"))+
+    #scale_colour_grey(start = 0, end = .7) +
+    geom_point(data=a5_dots,aes(colour=REPLICATE))+
+    geom_smooth(data=r5_regressions,method="lm",aes(colour=REPLICATE),se=F)+
+    facet_wrap(~TEMPERATURA)+
+    theme_bw()+
+    theme(plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+    ggtitle(Title5)+
+    xlab("Time (days)")+
+    ylab("Biomass (lnFluorescence)")+
+    ggsave(file=paste(Sps[x],"_growDynamics_5.png",sep=""),dpi = 600)
+  
+  b5_dots
+  }
+
+
+test_5_dots<-lapply(c(1:length(Sps)),Plotting_growth_5_dots)
+test_5_dots
+
+```
+
+
+
+

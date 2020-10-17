@@ -1,0 +1,963 @@
+---
+title: "TPCs_SpsCurves_Paper_Nov2019"
+author: "Maria Aranguren-Gassis"
+date: "21/11/2019"
+output: html_document
+---
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+
+# Code by CT Kremer and M Aranguren-Gassis, 2019
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+
+library(lubridate)
+library(dplyr)
+library(bbmle)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(devtools)
+library(mleTools)
+library(emdbook)
+library(stringr)
+
+
+# Use growthTools - package developed by CT Kremer
+library(growthTools)
+```
+
+###################################
+#####Double Exponential Model######
+###################################
+
+#Skeletonema tropicum
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#import data
+dat_Stro<-read.csv("./Stro_GrowthCurves_Thomas_SEobserved.csv", header=TRUE,sep=";")
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Stro$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Stro.curve<-bind_cols(Extra_columns_ID,dat_Stro)
+
+Stro.curve$temperature<-as.character(Stro.curve$temperature)
+
+Stro.curve$temperature<-as.numeric(Stro.curve$temperature)
+
+
+
+
+# use growthTools to automate fitting of DE model TPC curves
+
+
+fit_NoReplicates_Stro<-Stro.curve %>% group_by(Nitrate.concentration) %>% do(tpcs=get.decurve.tpc(.$temperature,.$Growth.rate,plotQ = T,conf.bandQ = T,id=.$Nitrate.concentration))
+
+
+# extract traits and confidence intervals from the DE curve fits:
+
+
+fit.NoRep.Stro.clean <- fit_NoReplicates_Stro %>% summarise(Nitrate.concentration,topt=tpcs$topt,b1=tpcs$b1,b2=tpcs$b2,d0=tpcs$d0,d2=tpcs$d2,s=tpcs$s,tmin=tpcs$tmin,tmax=tpcs$tmax,rsqr=tpcs$rsqr,topt.lw=tpcs$ciF[1,1],topt.up=tpcs$ciF[1,2])
+
+
+# Calculate CI around umax for both N treatment populations
+umax.list<-rep(NA,nrow(fit.NoRep.Stro.clean))
+ci.list<-rep(NA,nrow(fit.NoRep.Stro.clean))
+for(i in 1:nrow(fit.NoRep.Stro.clean)){
+  # here's the umax:
+  umax<-decurve(fit.NoRep.Stro.clean$topt[i],fit.NoRep.Stro.clean$topt[i],fit.NoRep.Stro.clean$b1[i],fit.NoRep.Stro.clean$b2[i],fit.NoRep.Stro.clean$d0[i],fit.NoRep.Stro.clean$d2[i])
+  
+  # figure out the confidence band around umax:
+  xs<-fit.NoRep.Stro.clean$topt[i]
+  cfs<-c(fit.NoRep.Stro.clean$topt[i],fit.NoRep.Stro.clean$b1[i],fit.NoRep.Stro.clean$b2[i],fit.NoRep.Stro.clean$d0[i],fit.NoRep.Stro.clean$d2[i],fit.NoRep.Stro.clean$s[i])
+  names(cfs)<-c('topt','b1','b2','d0','d2','s')
+  dvs<-deltavar(fun=decurve(xs,topt,b1,b2,d0,d2),meanval=cfs,Sigma=fit_NoReplicates_Stro[i,2][[1]][[1]]$vcov)
+  ci.approx<-1.96*sqrt(dvs)
+  ci.list[i]<-ci.approx
+  umax.list[i]<-umax
+}
+fit.NoRep.Stro.clean$umax<-umax.list
+fit.NoRep.Stro.clean$umax.lw<-umax.list-ci.list
+fit.NoRep.Stro.clean$umax.up<-umax.list+ci.list
+
+fit.NoRep.Stro.clean
+
+Stro_traits_Table<-select(fit.NoRep.Stro.clean, Nitrate.concentration,umax,umax.lw,umax.up,topt,topt.lw,topt.up)
+
+Stro_traits_Table$Species<-c("Skeletonema tropicum","Skeletonema tropicum")
+
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Extract predicted values
+DEfit_Stro <- fit_NoReplicates_Stro %>% group_by(Nitrate.concentration) %>% do(predict.decurve(.$tpcs,
+se.fit = T)) 
+
+
+DEcurve_Lines_Stro <- ggplot(DEfit_Stro, aes(x = temperature, y = mu)) + geom_hline(linetype = "dashed", yintercept = 0) +
+scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+#scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+scale_linetype_manual(values = c("dashed", "solid"))+
+geom_line(aes(colour = factor(Nitrate.concentration),linetype=Nitrate.concentration),size=1) +
+geom_line(aes(y=mu-se.fit,colour=Nitrate.concentration),linetype=3)+
+geom_line(aes(y=mu+se.fit,colour=Nitrate.concentration),linetype=3)+
+coord_cartesian(ylim = c(-0.25,
+1), xlim = c(9, 35)) + 
+#scale_x_continuous("Temperature (ºC)") +
+scale_y_continuous(expression("Growth rate (d"^"-1"*")")) +
+scale_colour_discrete("Nitrate.concentration") +
+ggtitle("Skeletonema tropicum")+
+theme_bw()+
+theme(legend.position="none",axis.title.x = element_blank(), plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))
+#coord_cartesian is for zooming the plot without changing the scales
+
+DEcurve_Lines_Stro
+ 
+# recapitulate corresponding data frame of observations:
+DEfit_Stro.obs <- fit_NoReplicates_Stro %>% group_by(Nitrate.concentration) %>% do(.$tpcs[[1]]$data)
+
+
+DEcurve_Stro<-DEcurve_Lines_Stro + 
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  geom_point(data = DEfit_Stro.obs, aes(colour = factor(Nitrate.concentration),shape=Nitrate.concentration))
+
+DEcurve_Stro
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Calculate the differences between L1 and 5uM N, and plot them
+
+
+#split the L1 and 5 data from the data file, restrict values to 10-40ºC 
+
+ndat.Stro.L1<-filter(DEfit_Stro,Nitrate.concentration=="L1")
+ndat.Stro.L1<-filter(ndat.Stro.L1,temperature>=10&temperature<=34)
+ndat.Stro.5<-filter(DEfit_Stro,Nitrate.concentration=="5")
+ndat.Stro.5<-filter(ndat.Stro.5,temperature>=10&temperature<=34)
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Stro2.columns<-inner_join(ndat.Stro.L1,ndat.Stro.5,by="temperature")
+
+#Calculating the difference between predicted L1 and predited 5uM
+
+DEfit_differences_Stro<-mutate(ndat.Stro2.columns,Growth.rate.difference=mu.x-mu.y)
+
+#Extracting L1 Topt for plotting
+Topt_Stro_L1<-filter(fit.NoRep.Stro.clean,Nitrate.concentration=="L1")
+Topt_Stro_L1<-Topt_Stro_L1$topt
+
+#Differences plot
+plot_difference_Stro<-ggplot(DEfit_differences_Stro,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+  coord_cartesian(ylim = c(-0.5,
+0.2), xlim = c(9, 35)) + 
+	#scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous('Growth rate difference')+
+  ggtitle("Skeletonema tropicum")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Topt_Stro_L1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Stro5)
+
+plot_difference_Stro
+
+
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Stro<-max(DEfit_differences_Stro$Growth.rate.difference)
+position.max.GR.Difference.Stro<-which(DEfit_differences_Stro$Growth.rate.difference==Max.GR.Difference.Stro)
+Temperature.Max.GR.Difference.Stro<-DEfit_differences_Stro$temperature[position.max.GR.Difference.Stro]
+
+Stro_traits_Table$MaxDiff<-c(NaN,Temperature.Max.GR.Difference.Stro)
+```
+
+
+#Chaetoceros simplex
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#import data
+dat_Chsim<-read.csv("./Chsim_GrowthCurves_Thomas_SEobserved.csv", header=TRUE,sep=";")
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Chsim$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Chsim.curve<-bind_cols(Extra_columns_ID,dat_Chsim)
+
+Chsim.curve$temperature<-as.character(Chsim.curve$temperature)
+
+Chsim.curve$temperature<-as.numeric(Chsim.curve$temperature)
+
+
+
+
+# use growthTools to automate fitting of DE model TPC curves
+
+
+fit_NoReplicates_Chsim<-Chsim.curve %>% group_by(Nitrate.concentration) %>% do(tpcs=get.decurve.tpc(.$temperature,.$Growth.rate,plotQ = T,conf.bandQ = T,id=.$Nitrate.concentration))
+
+# extract traits and confidence intervals from the DE curve fits:
+
+
+fit.NoRep.Chsim.clean <- fit_NoReplicates_Chsim %>% summarise(Nitrate.concentration,topt=tpcs$topt,b1=tpcs$b1,b2=tpcs$b2,d0=tpcs$d0,d2=tpcs$d2,s=tpcs$s,tmin=tpcs$tmin,tmax=tpcs$tmax,rsqr=tpcs$rsqr,topt.lw=tpcs$ciF[1,1],topt.up=tpcs$ciF[1,2])
+
+
+
+# Calculate CI around umax for both N treatment populations
+umax.list<-rep(NA,nrow(fit.NoRep.Chsim.clean))
+ci.list<-rep(NA,nrow(fit.NoRep.Chsim.clean))
+for(i in 1:nrow(fit.NoRep.Chsim.clean)){
+  # here's the umax:
+  umax<-decurve(fit.NoRep.Chsim.clean$topt[i],fit.NoRep.Chsim.clean$topt[i],fit.NoRep.Chsim.clean$b1[i],fit.NoRep.Chsim.clean$b2[i],fit.NoRep.Chsim.clean$d0[i],fit.NoRep.Chsim.clean$d2[i])
+  
+  # figure out the confidence band around umax:
+  xs<-fit.NoRep.Chsim.clean$topt[i]
+  cfs<-c(fit.NoRep.Chsim.clean$topt[i],fit.NoRep.Chsim.clean$b1[i],fit.NoRep.Chsim.clean$b2[i],fit.NoRep.Chsim.clean$d0[i],fit.NoRep.Chsim.clean$d2[i],fit.NoRep.Chsim.clean$s[i])
+  names(cfs)<-c('topt','b1','b2','d0','d2','s')
+  dvs<-deltavar(fun=decurve(xs,topt,b1,b2,d0,d2),meanval=cfs,Sigma=fit_NoReplicates_Chsim[i,2][[1]][[1]]$vcov)
+  ci.approx<-1.96*sqrt(dvs)
+  ci.list[i]<-ci.approx
+  umax.list[i]<-umax
+}
+fit.NoRep.Chsim.clean$umax<-umax.list
+fit.NoRep.Chsim.clean$umax.lw<-umax.list-ci.list
+fit.NoRep.Chsim.clean$umax.up<-umax.list+ci.list
+
+
+fit.NoRep.Chsim.clean
+
+Chsim_traits_Table<-select(fit.NoRep.Chsim.clean, Nitrate.concentration,umax,umax.lw,umax.up,topt,topt.lw,topt.up)
+
+Chsim_traits_Table$Species<-c("Chaetoceros simplex","Chaetoceros simplex")
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Extract predicted values
+DEfit_Chsim <- fit_NoReplicates_Chsim %>% group_by(Nitrate.concentration) %>% do(predict.decurve(.$tpcs,
+se.fit = T)) 
+
+
+DEcurve_Lines_Chsim <- ggplot(DEfit_Chsim, aes(x = temperature, y = mu)) + geom_hline(linetype = "dashed", yintercept = 0) +
+scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+#scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+scale_linetype_manual(values = c("dashed", "solid"))+
+geom_line(aes(colour = factor(Nitrate.concentration),linetype=Nitrate.concentration),size=1) +
+geom_line(aes(y=mu-se.fit,colour=Nitrate.concentration),linetype=3)+
+geom_line(aes(y=mu+se.fit,colour=Nitrate.concentration),linetype=3)+ coord_cartesian(ylim = c(-0.25,
+1.5), xlim = c(9, 35)) + 
+#scale_x_continuous("Temperature (ºC)") +
+#scale_y_continuous(expression("Growth rate (d"^"-1"*")")) +
+scale_colour_discrete("Nitrate.concentration") +
+ggtitle("Chaetoceros simplex")+
+theme_bw()+
+theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))
+#coord_cartesian is for zooming the plot without changing the scales
+
+DEcurve_Lines_Chsim
+ 
+# recapitulate corresponding data frame of observations:
+DEfit_Chsim.obs <- fit_NoReplicates_Chsim %>% group_by(Nitrate.concentration) %>% do(.$tpcs[[1]]$data)
+
+
+DEcurve_Chsim<-DEcurve_Lines_Chsim + 
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  geom_point(data = DEfit_Chsim.obs, aes(colour = factor(Nitrate.concentration),shape=Nitrate.concentration))
+
+DEcurve_Chsim
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Calculate the differences between L1 and 5uM N, and plot them
+
+
+#split the L1 and 5 data from the data file, restrict values to 10-40ºC 
+
+ndat.Chsim.L1<-filter(DEfit_Chsim,Nitrate.concentration=="L1")
+ndat.Chsim.L1<-filter(ndat.Chsim.L1,temperature>=10&temperature<=34)
+ndat.Chsim.5<-filter(DEfit_Chsim,Nitrate.concentration=="5")
+ndat.Chsim.5<-filter(ndat.Chsim.5,temperature>=10&temperature<=34)
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Chsim2.columns<-inner_join(ndat.Chsim.L1,ndat.Chsim.5,by="temperature")
+
+#Calculating the difference between predicted L1 and predited 5uM
+
+DEfit_differences_Chsim<-mutate(ndat.Chsim2.columns,Growth.rate.difference=mu.x-mu.y)
+
+#Extracting L1 Topt for plotting
+Topt_Chsim_L1<-filter(fit.NoRep.Chsim.clean,Nitrate.concentration=="L1")
+Topt_Chsim_L1<-Topt_Chsim_L1$topt
+
+#Differences plot
+plot_difference_Chsim<-ggplot(DEfit_differences_Chsim,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+  coord_cartesian(ylim = c(-0.1,
+0.4), xlim = c(9, 35)) + 
+	#scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous('Growth rate difference')+
+  ggtitle("Chaetoceros simplex")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Topt_Chsim_L1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Chsim5)
+
+plot_difference_Chsim
+
+
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Chsim<-max(DEfit_differences_Chsim$Growth.rate.difference)
+position.max.GR.Difference.Chsim<-which(DEfit_differences_Chsim$Growth.rate.difference==Max.GR.Difference.Chsim)
+Temperature.Max.GR.Difference.Chsim<-DEfit_differences_Chsim$temperature[position.max.GR.Difference.Chsim]
+
+Chsim_traits_Table$MaxDiff<-c(NaN,Temperature.Max.GR.Difference.Chsim)
+```
+
+
+
+
+#Perideraion elongatum
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#import data
+dat_Pelo<-read.csv("./Pelo_GrowthCurves_Thomas_SEobserved.csv", header=TRUE,sep=";")
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Pelo$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Pelo.curve<-bind_cols(Extra_columns_ID,dat_Pelo)
+
+Pelo.curve$temperature<-as.character(Pelo.curve$temperature)
+
+Pelo.curve$temperature<-as.numeric(Pelo.curve$temperature)
+
+
+
+
+# use growthTools to automate fitting of DE model TPC curves
+
+
+fit_NoReplicates_Pelo<-Pelo.curve %>% group_by(Nitrate.concentration) %>% do(tpcs=get.decurve.tpc(.$temperature,.$Growth.rate,plotQ = T,conf.bandQ = T,id=.$Nitrate.concentration))
+
+# extract traits and confidence intervals from the DE curve fits:
+
+
+fit.NoRep.Pelo.clean <- fit_NoReplicates_Pelo %>% summarise(Nitrate.concentration,topt=tpcs$topt,b1=tpcs$b1,b2=tpcs$b2,d0=tpcs$d0,d2=tpcs$d2,s=tpcs$s,tmin=tpcs$tmin,tmax=tpcs$tmax,rsqr=tpcs$rsqr,topt.lw=tpcs$ciF[1,1],topt.up=tpcs$ciF[1,2])
+
+
+
+# Calculate CI around umax for both N treatment populations
+umax.list<-rep(NA,nrow(fit.NoRep.Pelo.clean))
+ci.list<-rep(NA,nrow(fit.NoRep.Pelo.clean))
+for(i in 1:nrow(fit.NoRep.Pelo.clean)){
+  # here's the umax:
+  umax<-decurve(fit.NoRep.Pelo.clean$topt[i],fit.NoRep.Pelo.clean$topt[i],fit.NoRep.Pelo.clean$b1[i],fit.NoRep.Pelo.clean$b2[i],fit.NoRep.Pelo.clean$d0[i],fit.NoRep.Pelo.clean$d2[i])
+  
+  # figure out the confidence band around umax:
+  xs<-fit.NoRep.Pelo.clean$topt[i]
+  cfs<-c(fit.NoRep.Pelo.clean$topt[i],fit.NoRep.Pelo.clean$b1[i],fit.NoRep.Pelo.clean$b2[i],fit.NoRep.Pelo.clean$d0[i],fit.NoRep.Pelo.clean$d2[i],fit.NoRep.Pelo.clean$s[i])
+  names(cfs)<-c('topt','b1','b2','d0','d2','s')
+  dvs<-deltavar(fun=decurve(xs,topt,b1,b2,d0,d2),meanval=cfs,Sigma=fit_NoReplicates_Pelo[i,2][[1]][[1]]$vcov)
+  ci.approx<-1.96*sqrt(dvs)
+  ci.list[i]<-ci.approx
+  umax.list[i]<-umax
+}
+fit.NoRep.Pelo.clean$umax<-umax.list
+fit.NoRep.Pelo.clean$umax.lw<-umax.list-ci.list
+fit.NoRep.Pelo.clean$umax.up<-umax.list+ci.list
+
+
+fit.NoRep.Pelo.clean
+
+Pelo_traits_Table<-select(fit.NoRep.Pelo.clean, Nitrate.concentration,umax,umax.lw,umax.up,topt,topt.lw,topt.up)
+
+Pelo_traits_Table$Species<-c("Perideraion elongatum","Perideraion elongatum")
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Extract predicted values
+DEfit_Pelo <- fit_NoReplicates_Pelo %>% group_by(Nitrate.concentration) %>% do(predict.decurve(.$tpcs,
+se.fit = T)) 
+
+
+DEcurve_Lines_Pelo <- ggplot(DEfit_Pelo, aes(x = temperature, y = mu)) + geom_hline(linetype = "dashed", yintercept = 0) +
+scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+#scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+scale_linetype_manual(values = c("dashed", "solid"))+
+geom_line(aes(colour = factor(Nitrate.concentration),linetype=Nitrate.concentration),size=1) +
+geom_line(aes(y=mu-se.fit,colour=Nitrate.concentration),linetype=3)+
+geom_line(aes(y=mu+se.fit,colour=Nitrate.concentration),linetype=3)+ coord_cartesian(ylim = c(-0.4,
+0.7), xlim = c(9, 35)) + 
+#scale_x_continuous("Temperature (ºC)") +
+scale_y_continuous(expression("Growth rate (d"^"-1"*")")) +
+scale_colour_discrete("Nitrate.concentration") +
+ggtitle("Perideraion elongatum")+
+theme_bw()+
+theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))
+#coord_cartesian is for zooming the plot without changing the scales
+
+DEcurve_Lines_Pelo
+ 
+# recapitulate corresponding data frame of observations:
+DEfit_Pelo.obs <- fit_NoReplicates_Pelo %>% group_by(Nitrate.concentration) %>% do(.$tpcs[[1]]$data)
+
+
+DEcurve_Pelo<-DEcurve_Lines_Pelo + 
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  geom_point(data = DEfit_Pelo.obs, aes(colour = factor(Nitrate.concentration),shape=Nitrate.concentration))
+
+DEcurve_Pelo
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Calculate the differences between L1 and 5uM N, and plot them
+
+
+#split the L1 and 5 data from the data file, restrict values to 10-40ºC 
+
+ndat.Pelo.L1<-filter(DEfit_Pelo,Nitrate.concentration=="L1")
+ndat.Pelo.L1<-filter(ndat.Pelo.L1,temperature>=10&temperature<=34)
+ndat.Pelo.5<-filter(DEfit_Pelo,Nitrate.concentration=="5")
+ndat.Pelo.5<-filter(ndat.Pelo.5,temperature>=10&temperature<=34)
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Pelo2.columns<-inner_join(ndat.Pelo.L1,ndat.Pelo.5,by="temperature")
+
+#Calculating the difference between predicted L1 and predited 5uM
+
+DEfit_differences_Pelo<-mutate(ndat.Pelo2.columns,Growth.rate.difference=mu.x-mu.y)
+
+#Extracting L1 Topt for plotting
+Topt_Pelo_L1<-filter(fit.NoRep.Pelo.clean,Nitrate.concentration=="L1")
+Topt_Pelo_L1<-Topt_Pelo_L1$topt
+
+#Differences plot
+plot_difference_Pelo<-ggplot(DEfit_differences_Pelo,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+  coord_cartesian(ylim = c(-0.2,
+0.4), xlim = c(9, 35)) + 
+	#scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous('Growth rate difference')+
+  ggtitle("Perideraion elongatum")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Topt_Pelo_L1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Pelo5)
+
+plot_difference_Pelo
+
+
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Pelo<-max(DEfit_differences_Pelo$Growth.rate.difference)
+position.max.GR.Difference.Pelo<-which(DEfit_differences_Pelo$Growth.rate.difference==Max.GR.Difference.Pelo)
+Temperature.Max.GR.Difference.Pelo<-DEfit_differences_Pelo$temperature[position.max.GR.Difference.Pelo]
+
+Pelo_traits_Table$MaxDiff<-c(NaN,Temperature.Max.GR.Difference.Pelo)
+```
+
+
+
+
+
+#Hemiaulus sinensis
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#import data
+dat_Hsin<-read.csv("./Hsin_GrowthCurves_Thomas_SEobserved.csv", header=TRUE,sep=";")
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Hsin$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Hsin.curve<-bind_cols(Extra_columns_ID,dat_Hsin)
+
+Hsin.curve$temperature<-as.character(Hsin.curve$temperature)
+
+Hsin.curve$temperature<-as.numeric(Hsin.curve$temperature)
+
+
+
+
+# use growthTools to automate fitting of DE model TPC curves
+
+
+fit_NoReplicates_Hsin<-Hsin.curve %>% group_by(Nitrate.concentration) %>% do(tpcs=get.decurve.tpc(.$temperature,.$Growth.rate,plotQ = T,conf.bandQ = T,id=.$Nitrate.concentration))
+
+# extract traits and confidence intervals from the DE curve fits:
+
+
+fit.NoRep.Hsin.clean <- fit_NoReplicates_Hsin %>% summarise(Nitrate.concentration,topt=tpcs$topt,b1=tpcs$b1,b2=tpcs$b2,d0=tpcs$d0,d2=tpcs$d2,s=tpcs$s,tmin=tpcs$tmin,tmax=tpcs$tmax,rsqr=tpcs$rsqr,topt.lw=tpcs$ciF[1,1],topt.up=tpcs$ciF[1,2])
+
+
+# Calculate CI around umax for both N treatment populations
+umax.list<-rep(NA,nrow(fit.NoRep.Hsin.clean))
+ci.list<-rep(NA,nrow(fit.NoRep.Hsin.clean))
+for(i in 1:nrow(fit.NoRep.Hsin.clean)){
+  # here's the umax:
+  umax<-decurve(fit.NoRep.Hsin.clean$topt[i],fit.NoRep.Hsin.clean$topt[i],fit.NoRep.Hsin.clean$b1[i],fit.NoRep.Hsin.clean$b2[i],fit.NoRep.Hsin.clean$d0[i],fit.NoRep.Hsin.clean$d2[i])
+  
+  # figure out the confidence band around umax:
+  xs<-fit.NoRep.Hsin.clean$topt[i]
+  cfs<-c(fit.NoRep.Hsin.clean$topt[i],fit.NoRep.Hsin.clean$b1[i],fit.NoRep.Hsin.clean$b2[i],fit.NoRep.Hsin.clean$d0[i],fit.NoRep.Hsin.clean$d2[i],fit.NoRep.Hsin.clean$s[i])
+  names(cfs)<-c('topt','b1','b2','d0','d2','s')
+  dvs<-deltavar(fun=decurve(xs,topt,b1,b2,d0,d2),meanval=cfs,Sigma=fit_NoReplicates_Hsin[i,2][[1]][[1]]$vcov)
+  ci.approx<-1.96*sqrt(dvs)
+  ci.list[i]<-ci.approx
+  umax.list[i]<-umax
+}
+fit.NoRep.Hsin.clean$umax<-umax.list
+fit.NoRep.Hsin.clean$umax.lw<-umax.list-ci.list
+fit.NoRep.Hsin.clean$umax.up<-umax.list+ci.list
+
+fit.NoRep.Hsin.clean
+
+Hsin_traits_Table<-select(fit.NoRep.Hsin.clean, Nitrate.concentration,umax,umax.lw,umax.up,topt,topt.lw,topt.up)
+
+Hsin_traits_Table$Species<-c("Hemiaulus sinensis","Hemiaulus sinensis")
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Extract predicted values
+DEfit_Hsin <- fit_NoReplicates_Hsin %>% group_by(Nitrate.concentration) %>% do(predict.decurve(.$tpcs,
+se.fit = T)) 
+
+
+DEcurve_Lines_Hsin <- ggplot(DEfit_Hsin, aes(x = temperature, y = mu)) + geom_hline(linetype = "dashed", yintercept = 0) +
+scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+#scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+scale_linetype_manual(values = c("dashed", "solid"))+
+geom_line(aes(colour = factor(Nitrate.concentration),linetype=Nitrate.concentration),size=1) +
+geom_line(aes(y=mu-se.fit,colour=Nitrate.concentration),linetype=3)+
+geom_line(aes(y=mu+se.fit,colour=Nitrate.concentration),linetype=3)+ coord_cartesian(ylim = c(-0.2,
+1.5), xlim = c(9, 35)) + 
+#scale_x_continuous("Temperature (ºC)") +
+#scale_y_continuous(expression("Growth rate (d"^"-1"*")")) +
+scale_colour_discrete("Nitrate.concentration") +
+ggtitle("Hemiaulus sinensis")+
+theme_bw()+
+theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))
+#coord_cartesian is for zooming the plot without changing the scales
+
+DEcurve_Lines_Hsin
+ 
+# recapitulate corresponding data frame of observations:
+DEfit_Hsin.obs <- fit_NoReplicates_Hsin %>% group_by(Nitrate.concentration) %>% do(.$tpcs[[1]]$data)
+
+
+DEcurve_Hsin<-DEcurve_Lines_Hsin + 
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  geom_point(data = DEfit_Hsin.obs, aes(colour = factor(Nitrate.concentration),shape=Nitrate.concentration))
+
+DEcurve_Hsin
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Calculate the differences between L1 and 5uM N, and plot them
+
+
+#split the L1 and 5 data from the data file, restrict values to 10-40ºC 
+
+ndat.Hsin.L1<-filter(DEfit_Hsin,Nitrate.concentration=="L1")
+ndat.Hsin.L1<-filter(ndat.Hsin.L1,temperature>=10&temperature<=34)
+ndat.Hsin.5<-filter(DEfit_Hsin,Nitrate.concentration=="5")
+ndat.Hsin.5<-filter(ndat.Hsin.5,temperature>=10&temperature<=34)
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Hsin2.columns<-inner_join(ndat.Hsin.L1,ndat.Hsin.5,by="temperature")
+
+#Calculating the difference between predicted L1 and predited 5uM
+
+DEfit_differences_Hsin<-mutate(ndat.Hsin2.columns,Growth.rate.difference=mu.x-mu.y)
+
+#Extracting L1 Topt for plotting
+Topt_Hsin_L1<-filter(fit.NoRep.Hsin.clean,Nitrate.concentration=="L1")
+Topt_Hsin_L1<-Topt_Hsin_L1$topt
+
+#Differences plot
+plot_difference_Hsin<-ggplot(DEfit_differences_Hsin,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+  coord_cartesian(ylim = c(-0.2,
+0.3), xlim = c(9, 35)) + 
+	#scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous('Growth rate difference')+
+  ggtitle("Hemiaulus sinensis")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.x = element_blank(),axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Topt_Hsin_L1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Hsin5)
+
+plot_difference_Hsin
+
+
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Hsin<-max(DEfit_differences_Hsin$Growth.rate.difference)
+position.max.GR.Difference.Hsin<-which(DEfit_differences_Hsin$Growth.rate.difference==Max.GR.Difference.Hsin)
+Temperature.Max.GR.Difference.Hsin<-DEfit_differences_Hsin$temperature[position.max.GR.Difference.Hsin]
+
+Hsin_traits_Table$MaxDiff<-c(NaN,Temperature.Max.GR.Difference.Hsin)
+```
+
+
+
+
+
+#Astrosyne radiata
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#import data
+dat_Arad<-read.csv("./Arad_GrowthCurves_Thomas_SEobserved.csv", header=TRUE,sep=";")
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Arad$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Arad.curve<-bind_cols(Extra_columns_ID,dat_Arad)
+
+Arad.curve$temperature<-as.character(Arad.curve$temperature)
+
+Arad.curve$temperature<-as.numeric(Arad.curve$temperature)
+
+
+
+# use growthTools to automate fitting of DE model TPC curves
+
+
+fit_NoReplicates_Arad<-Arad.curve %>% group_by(Nitrate.concentration) %>% do(tpcs=get.decurve.tpc(.$temperature,.$Growth.rate,plotQ = T,conf.bandQ = T,id=.$Nitrate.concentration))
+
+# extract traits and confidence intervals from the DE curve fits:
+
+
+fit.NoRep.Arad.clean <- fit_NoReplicates_Arad %>% summarise(Nitrate.concentration,topt=tpcs$topt,b1=tpcs$b1,b2=tpcs$b2,d0=tpcs$d0,d2=tpcs$d2,s=tpcs$s,tmin=tpcs$tmin,tmax=tpcs$tmax,rsqr=tpcs$rsqr,topt.lw=tpcs$ciF[1,1],topt.up=tpcs$ciF[1,2])
+
+
+# Calculate CI around umax for both N treatment populations
+umax.list<-rep(NA,nrow(fit.NoRep.Arad.clean))
+ci.list<-rep(NA,nrow(fit.NoRep.Arad.clean))
+for(i in 1:nrow(fit.NoRep.Arad.clean)){
+  # here's the umax:
+  umax<-decurve(fit.NoRep.Arad.clean$topt[i],fit.NoRep.Arad.clean$topt[i],fit.NoRep.Arad.clean$b1[i],fit.NoRep.Arad.clean$b2[i],fit.NoRep.Arad.clean$d0[i],fit.NoRep.Arad.clean$d2[i])
+  
+  # figure out the confidence band around umax:
+  xs<-fit.NoRep.Arad.clean$topt[i]
+  cfs<-c(fit.NoRep.Arad.clean$topt[i],fit.NoRep.Arad.clean$b1[i],fit.NoRep.Arad.clean$b2[i],fit.NoRep.Arad.clean$d0[i],fit.NoRep.Arad.clean$d2[i],fit.NoRep.Arad.clean$s[i])
+  names(cfs)<-c('topt','b1','b2','d0','d2','s')
+  dvs<-deltavar(fun=decurve(xs,topt,b1,b2,d0,d2),meanval=cfs,Sigma=fit_NoReplicates_Arad[i,2][[1]][[1]]$vcov)
+  ci.approx<-1.96*sqrt(dvs)
+  ci.list[i]<-ci.approx
+  umax.list[i]<-umax
+}
+fit.NoRep.Arad.clean$umax<-umax.list
+fit.NoRep.Arad.clean$umax.lw<-umax.list-ci.list
+fit.NoRep.Arad.clean$umax.up<-umax.list+ci.list
+
+fit.NoRep.Arad.clean
+
+Arad_traits_Table<-select(fit.NoRep.Arad.clean, Nitrate.concentration,umax,umax.lw,umax.up,topt,topt.lw,topt.up)
+
+Arad_traits_Table$Species<-c("Astrosyne radiata","Astrosyne radiata")
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Extract predicted values
+DEfit_Arad <- fit_NoReplicates_Arad %>% group_by(Nitrate.concentration) %>% do(predict.decurve(.$tpcs,
+se.fit = T)) 
+
+
+DEcurve_Lines_Arad <- ggplot(DEfit_Arad, aes(x = temperature, y = mu)) + geom_hline(linetype = "dashed", yintercept = 0) +
+scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+#scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+scale_linetype_manual(values = c("dashed", "solid"))+
+geom_line(aes(colour = factor(Nitrate.concentration),linetype=Nitrate.concentration),size=1) +
+geom_line(aes(y=mu-se.fit,colour=Nitrate.concentration),linetype=3)+
+geom_line(aes(y=mu+se.fit,colour=Nitrate.concentration),linetype=3)+ coord_cartesian(ylim = c(-0.25,
+1), xlim = c(9, 35)) + 
+scale_x_continuous("Temperature (ºC)") +
+scale_y_continuous(expression("Growth rate (d"^"-1"*")")) +
+scale_colour_discrete("Nitrate.concentration") +
+ggtitle("Astrosyne radiata")+
+theme_bw()+
+theme(legend.position="none",plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))
+#coord_cartesian is for zooming the plot without changing the scales
+
+DEcurve_Lines_Arad
+ 
+# recapitulate corresponding data frame of observations:
+DEfit_Arad.obs <- fit_NoReplicates_Arad %>% group_by(Nitrate.concentration) %>% do(.$tpcs[[1]]$data)
+
+
+DEcurve_Arad<-DEcurve_Lines_Arad + 
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  geom_point(data = DEfit_Arad.obs, aes(colour = factor(Nitrate.concentration),shape=Nitrate.concentration))
+
+DEcurve_Arad
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Calculate the differences between L1 and 5uM N, and plot them
+
+
+#split the L1 and 5 data from the data file, restrict values to 10-40ºC 
+
+ndat.Arad.L1<-filter(DEfit_Arad,Nitrate.concentration=="L1")
+ndat.Arad.L1<-filter(ndat.Arad.L1,temperature>=10&temperature<=34)
+ndat.Arad.5<-filter(DEfit_Arad,Nitrate.concentration=="5")
+ndat.Arad.5<-filter(ndat.Arad.5,temperature>=10&temperature<=34)
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Arad2.columns<-inner_join(ndat.Arad.L1,ndat.Arad.5,by="temperature")
+
+#Calculating the difference between predicted L1 and predited 5uM
+
+DEfit_differences_Arad<-mutate(ndat.Arad2.columns,Growth.rate.difference=mu.x-mu.y)
+
+#Extracting L1 Topt for plotting
+Topt_Arad_L1<-filter(fit.NoRep.Arad.clean,Nitrate.concentration=="L1")
+Topt_Arad_L1<-Topt_Arad_L1$topt
+
+#Differences plot
+plot_difference_Arad<-ggplot(DEfit_differences_Arad,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+  coord_cartesian(ylim = c(-0.1,
+0.7), xlim = c(9, 35)) + 
+	scale_x_continuous('Temperature (ºC)')+
+	scale_y_continuous('Growth rate difference')+
+  ggtitle("Astrosyne radiata")+
+	theme_bw()+
+  theme(legend.position="none",plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Topt_Arad_L1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Arad5)
+
+plot_difference_Arad
+
+
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Arad<-max(DEfit_differences_Arad$Growth.rate.difference)
+position.max.GR.Difference.Arad<-which(DEfit_differences_Arad$Growth.rate.difference==Max.GR.Difference.Arad)
+Temperature.Max.GR.Difference.Arad<-DEfit_differences_Arad$temperature[position.max.GR.Difference.Arad]
+
+Arad_traits_Table$MaxDiff<-c(NaN,Temperature.Max.GR.Difference.Arad)
+```
+
+
+
+
+#Coscinodiscus concinnus
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#import data
+dat_Ccon<-read.csv("./Ccon_GrowthCurves_Thomas_SEobserved.csv", header=TRUE,sep=";")
+
+
+#Making separate columns for the ID
+Extra_columns_ID<-as.data.frame(str_split_fixed(dat_Ccon$ID," ",3)) 
+
+colnames(Extra_columns_ID)<-c("temperature","Nitrate.concentration","replicate")
+
+
+
+Ccon.curve<-bind_cols(Extra_columns_ID,dat_Ccon)
+
+Ccon.curve$temperature<-as.character(Ccon.curve$temperature)
+
+Ccon.curve$temperature<-as.numeric(Ccon.curve$temperature)
+
+
+
+
+# use growthTools to automate fitting of DE model TPC curves
+
+fit_NoReplicates_Ccon<-Ccon.curve %>% group_by(Nitrate.concentration) %>% do(tpcs=get.decurve.tpc(.$temperature,.$Growth.rate,plotQ = T,conf.bandQ = T,id=.$Nitrate.concentration))
+
+# extract traits and confidence intervals from the DE curve fits:
+
+
+fit.NoRep.Ccon.clean <- fit_NoReplicates_Ccon %>% summarise(Nitrate.concentration,topt=tpcs$topt,b1=tpcs$b1,b2=tpcs$b2,d0=tpcs$d0,d2=tpcs$d2,s=tpcs$s,tmin=tpcs$tmin,tmax=tpcs$tmax,rsqr=tpcs$rsqr,topt.lw=tpcs$ciF[1,1],topt.up=tpcs$ciF[1,2])
+
+
+
+# Calculate CI around umax for both N treatment populations
+umax.list<-rep(NA,nrow(fit.NoRep.Ccon.clean))
+ci.list<-rep(NA,nrow(fit.NoRep.Ccon.clean))
+for(i in 1:nrow(fit.NoRep.Ccon.clean)){
+  # here's the umax:
+  umax<-decurve(fit.NoRep.Ccon.clean$topt[i],fit.NoRep.Ccon.clean$topt[i],fit.NoRep.Ccon.clean$b1[i],fit.NoRep.Ccon.clean$b2[i],fit.NoRep.Ccon.clean$d0[i],fit.NoRep.Ccon.clean$d2[i])
+  
+  # figure out the confidence band around umax:
+  xs<-fit.NoRep.Ccon.clean$topt[i]
+  cfs<-c(fit.NoRep.Ccon.clean$topt[i],fit.NoRep.Ccon.clean$b1[i],fit.NoRep.Ccon.clean$b2[i],fit.NoRep.Ccon.clean$d0[i],fit.NoRep.Ccon.clean$d2[i],fit.NoRep.Ccon.clean$s[i])
+  names(cfs)<-c('topt','b1','b2','d0','d2','s')
+  dvs<-deltavar(fun=decurve(xs,topt,b1,b2,d0,d2),meanval=cfs,Sigma=fit_NoReplicates_Ccon[i,2][[1]][[1]]$vcov)
+  ci.approx<-1.96*sqrt(dvs)
+  ci.list[i]<-ci.approx
+  umax.list[i]<-umax
+}
+fit.NoRep.Ccon.clean$umax<-umax.list
+fit.NoRep.Ccon.clean$umax.lw<-umax.list-ci.list
+fit.NoRep.Ccon.clean$umax.up<-umax.list+ci.list
+
+fit.NoRep.Ccon.clean
+
+Ccon_traits_Table<-select(fit.NoRep.Ccon.clean, Nitrate.concentration,umax,umax.lw,umax.up,topt,topt.lw,topt.up)
+
+Ccon_traits_Table$Species<-c("Coscinodiscus concinnus","Coscinodiscus concinnus")
+
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Extract predicted values
+DEfit_Ccon <- fit_NoReplicates_Ccon %>% group_by(Nitrate.concentration) %>% do(predict.decurve(.$tpcs,
+se.fit = T)) 
+
+
+DEcurve_Lines_Ccon <- ggplot(DEfit_Ccon, aes(x = temperature, y = mu)) + geom_hline(linetype = "dashed", yintercept = 0) +
+scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+#scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+scale_linetype_manual(values = c("dashed", "solid"))+
+geom_line(aes(colour = factor(Nitrate.concentration),linetype=Nitrate.concentration),size=1) +
+geom_line(aes(y=mu-se.fit,colour=Nitrate.concentration),linetype=3)+
+geom_line(aes(y=mu+se.fit,colour=Nitrate.concentration),linetype=3)+ coord_cartesian(ylim = c(-0.25,
+0.5), xlim = c(9, 35)) + 
+scale_x_continuous("Temperature (ºC)") +
+#scale_y_continuous(expression("Growth rate (d"^"-1"*")")) +
+scale_colour_discrete("Nitrate.concentration") +
+ggtitle("Coscinodiscus concinnus")+
+theme_bw()+
+theme(legend.position="none",axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))
+#coord_cartesian is for zooming the plot without changing the scales
+
+DEcurve_Lines_Ccon
+ 
+# recapitulate corresponding data frame of observations:
+DEfit_Ccon.obs <- fit_NoReplicates_Ccon %>% group_by(Nitrate.concentration) %>% do(.$tpcs[[1]]$data)
+
+
+DEcurve_Ccon<-DEcurve_Lines_Ccon + 
+  scale_colour_manual(values=c("#998ec3","#f1a340"))+ #for color version
+  #scale_colour_manual(values=c("grey33","Black"))+ #for B&W version
+  geom_point(data = DEfit_Ccon.obs, aes(colour = factor(Nitrate.concentration),shape=Nitrate.concentration))
+
+DEcurve_Ccon
+
+```
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+#Calculate the differences between L1 and 5uM N, and plot them
+
+
+#split the L1 and 5 data from the data file, restrict values to 10-40ºC 
+
+ndat.Ccon.L1<-filter(DEfit_Ccon,Nitrate.concentration=="L1")
+ndat.Ccon.L1<-filter(ndat.Ccon.L1,temperature>=10&temperature<=34)
+ndat.Ccon.5<-filter(DEfit_Ccon,Nitrate.concentration=="5")
+ndat.Ccon.5<-filter(ndat.Ccon.5,temperature>=10&temperature<=34)
+
+#Bind together the data of L1 and 5 uM as columns for each sps
+
+ndat.Ccon2.columns<-inner_join(ndat.Ccon.L1,ndat.Ccon.5,by="temperature")
+
+#Calculating the difference between predicted L1 and predited 5uM
+
+DEfit_differences_Ccon<-mutate(ndat.Ccon2.columns,Growth.rate.difference=mu.x-mu.y)
+
+#Extracting L1 Topt for plotting
+Topt_Ccon_L1<-filter(fit.NoRep.Ccon.clean,Nitrate.concentration=="L1")
+Topt_Ccon_L1<-Topt_Ccon_L1$topt
+
+#Differences plot
+plot_difference_Ccon<-ggplot(DEfit_differences_Ccon,aes(x=temperature,y=Growth.rate.difference))+
+	geom_line()+
+  coord_cartesian(ylim = c(-0.2,
+0.3), xlim = c(9, 35)) + 
+	scale_x_continuous('Temperature (ºC)')+
+	#scale_y_continuous('Growth rate difference')+
+  ggtitle("Coscinodiscus concinnus")+
+	theme_bw()+
+  theme(legend.position="none",axis.title.y = element_blank(),plot.title = element_text(face="italic", size=12),text=element_text(family="Times New Roman"))+
+  geom_hline(linetype = "dashed",yintercept=0)+
+  geom_vline(linetype="dotted",colour="dark grey",xintercept=Topt_Ccon_L1)
+  #geom_vline(linetype="dotted",colour="#D55E00",xintercept=Optimum.Temperature.Ccon5)
+
+plot_difference_Ccon
+
+
+#calculating the maximum of the GR differences curves and the temperature at which is achieved
+Max.GR.Difference.Ccon<-max(DEfit_differences_Ccon$Growth.rate.difference)
+position.max.GR.Difference.Ccon<-which(DEfit_differences_Ccon$Growth.rate.difference==Max.GR.Difference.Ccon)
+Temperature.Max.GR.Difference.Ccon<-DEfit_differences_Ccon$temperature[position.max.GR.Difference.Ccon]
+
+Ccon_traits_Table$MaxDiff<-c(NaN,Temperature.Max.GR.Difference.Ccon)
+```
+
+
+
+
+
+
+#Summary traits table
+```{r,echo=FALSE, message=FALSE, warning=FALSE} 
+
+All_traits<-bind_rows(Stro_traits_Table,Chsim_traits_Table,Pelo_traits_Table,Hsin_traits_Table,Arad_traits_Table,Ccon_traits_Table)
+
+All_traits
+
+
+
+```
+
+
+
+#All plots together
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#create the title
+AllCurves_title<-textGrob("Thermal performance curves",gp=gpar(fontfamily="Times New Roman",size=16))
+#create the image
+png(filename = "All_Curves_DEM.png",res=600, units = "mm", height = 183, width=183) # I've created a pnj with the specified name, with the spcified size and resolution (usually for ptintting is 300)
+Curves_Together<-grid.arrange(DEcurve_Stro,DEcurve_Chsim, DEcurve_Pelo, DEcurve_Hsin, DEcurve_Arad, DEcurve_Ccon, top= AllCurves_title) 
+ #call the plot-variable to put it in the png
+dev.off() #closes the png
+
+Curves_Together
+
+#create the title
+AllCurves_differences_title<-textGrob("Difference in growth rate between high N and low N conditions",gp=gpar(fontfamily="Times New Roman",size=16))
+#create the image
+png(filename = "All_Curves_differences_DEM.png",res=600, units = "mm", height = 183, width=183) #I've created a pnj with the specified name, with the spcified size and resolution (usually for ptintting is 300)
+Curves_Differences_Together<-grid.arrange(plot_difference_Stro,plot_difference_Chsim, plot_difference_Pelo, plot_difference_Hsin, plot_difference_Arad, plot_difference_Ccon, top=AllCurves_differences_title)
+ #call the plot-variable to put it in the png
+dev.off() #closes the png
+
+Curves_Differences_Together
+```
